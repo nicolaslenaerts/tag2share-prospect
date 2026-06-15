@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api } from "@/lib/api";
 import { Button, Card, Input, Badge, Spinner } from "@/components/ui";
 
@@ -37,12 +37,79 @@ function suppressionLabel(reason?: string | null) {
   return SUPPRESSION_LABEL[reason || ""] || "⛔ exclu";
 }
 
+// En-tête de colonne triable.
+function SortTh({
+  label, k, sortKey, sortDir, onSort,
+}: {
+  label: string;
+  k: SortKey;
+  sortKey: SortKey | null;
+  sortDir: "asc" | "desc";
+  onSort: (k: SortKey) => void;
+}) {
+  const active = sortKey === k;
+  return (
+    <th
+      className="p-3 cursor-pointer select-none hover:text-gray-700"
+      onClick={() => onSort(k)}
+    >
+      <span className="inline-flex items-center gap-1">
+        {label}
+        <span className={active ? "text-brand" : "text-gray-300"}>
+          {active ? (sortDir === "asc" ? "▲" : "▼") : "↕"}
+        </span>
+      </span>
+    </th>
+  );
+}
+
+type SortKey = "name" | "segments" | "phone" | "contact_name" | "email" | "status";
+
+// Valeur de tri par colonne (les nulls partent en fin de liste).
+function sortValue(p: Prospect, key: SortKey): string | number {
+  switch (key) {
+    case "segments":
+      return p.segments?.length ?? 0;
+    case "status":
+      // Ordre logique : trouvé < enrichi, puis contacté/exclu en bonus.
+      return `${p.status}${p.emailed ? "1" : "0"}${p.suppressed ? "1" : "0"}`;
+    default:
+      return (p[key] || "") as string;
+  }
+}
+
 export function Prospects({ onNext }: { onNext: () => void }) {
   const [list, setList] = useState<Prospect[]>([]);
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [enriching, setEnriching] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [sortKey, setSortKey] = useState<SortKey | null>(null);
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+
+  const sorted = useMemo(() => {
+    if (!sortKey) return list;
+    const dir = sortDir === "asc" ? 1 : -1;
+    return [...list].sort((a, b) => {
+      const va = sortValue(a, sortKey);
+      const vb = sortValue(b, sortKey);
+      if (typeof va === "number" && typeof vb === "number") return (va - vb) * dir;
+      const sa = String(va);
+      const sb = String(vb);
+      if (!sa && sb) return 1; // vides en fin, quel que soit le sens
+      if (sa && !sb) return -1;
+      return sa.localeCompare(sb, "fr", { sensitivity: "base" }) * dir;
+    });
+  }, [list, sortKey, sortDir]);
+
+  function toggleSort(key: SortKey) {
+    if (sortKey === key) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortKey(key);
+      setSortDir("asc");
+    }
+  }
 
   async function load() {
     setLoading(true);
@@ -93,6 +160,21 @@ export function Prospects({ onNext }: { onNext: () => void }) {
     setList((l) => l.filter((p) => p.id !== id));
   }
 
+  // Ajoute l'email du prospect à la liste de suppression (ne sera plus contacté).
+  async function exclude(p: Prospect) {
+    if (!p.email) return;
+    if (!confirm(`Exclure ${p.email} ? Cette adresse ne sera plus jamais contactée.`)) return;
+    await api("/api/suppressions", {
+      method: "POST",
+      json: { email: p.email, reason: "manual" },
+    });
+    setList((l) =>
+      l.map((x) =>
+        x.id === p.id ? { ...x, suppressed: true, suppression_reason: "manual" } : x
+      )
+    );
+  }
+
   return (
     <div className="space-y-4">
       <Card className="p-5">
@@ -135,17 +217,17 @@ export function Prospects({ onNext }: { onNext: () => void }) {
                       onChange={toggleAll}
                     />
                   </th>
-                  <th className="p-3">Business</th>
-                  <th className="p-3">Segments</th>
-                  <th className="p-3">Téléphone</th>
-                  <th className="p-3">Contact</th>
-                  <th className="p-3">Email</th>
-                  <th className="p-3">Statut</th>
+                  <SortTh label="Business" k="name" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+                  <SortTh label="Segments" k="segments" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+                  <SortTh label="Téléphone" k="phone" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+                  <SortTh label="Contact" k="contact_name" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+                  <SortTh label="Email" k="email" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+                  <SortTh label="Statut" k="status" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
                   <th className="p-3"></th>
                 </tr>
               </thead>
               <tbody>
-                {list.map((p) => (
+                {sorted.map((p) => (
                   <tr key={p.id} className="border-t border-gray-100 align-top">
                     <td className="p-3">
                       <input
@@ -255,9 +337,25 @@ export function Prospects({ onNext }: { onNext: () => void }) {
                       </div>
                     </td>
                     <td className="p-3">
-                      <Button variant="ghost" onClick={() => remove(p.id)}>
-                        ✕
-                      </Button>
+                      <div className="flex items-center gap-1 whitespace-nowrap">
+                        {p.email && !p.suppressed && (
+                          <Button
+                            variant="ghost"
+                            className="text-red-600"
+                            title="Exclure cette adresse (liste de suppression)"
+                            onClick={() => exclude(p)}
+                          >
+                            Exclure
+                          </Button>
+                        )}
+                        <Button
+                          variant="ghost"
+                          title="Retirer ce prospect"
+                          onClick={() => remove(p.id)}
+                        >
+                          ✕
+                        </Button>
+                      </div>
                     </td>
                   </tr>
                 ))}
