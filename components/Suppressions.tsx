@@ -32,6 +32,7 @@ export function Suppressions() {
   const [q, setQ] = useState("");
   const [loading, setLoading] = useState(true);
   const [newEmail, setNewEmail] = useState("");
+  const [newDetail, setNewDetail] = useState("");
   const [msg, setMsg] = useState("");
 
   async function load() {
@@ -54,8 +55,12 @@ export function Suppressions() {
 
   async function add() {
     if (!newEmail.includes("@")) return;
-    await api("/api/suppressions", { method: "POST", json: { email: newEmail, reason: "manual" } });
+    await api("/api/suppressions", {
+      method: "POST",
+      json: { email: newEmail, reason: "manual", detail: newDetail.trim() || undefined },
+    });
     setNewEmail("");
+    setNewDetail("");
     setMsg("Ajouté à la liste de suppression.");
     load();
   }
@@ -129,6 +134,13 @@ export function Suppressions() {
             placeholder="email@exemple.com"
             className="w-64"
           />
+          <Input
+            value={newDetail}
+            onChange={(e) => setNewDetail(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && add()}
+            placeholder="Raison (optionnel)"
+            className="w-64"
+          />
           <Button variant="outline" onClick={add} disabled={!newEmail.includes("@")}>
             Ajouter
           </Button>
@@ -159,6 +171,9 @@ export function Suppressions() {
                       <Badge color={REASON_COLOR[s.reason] || "gray"}>
                         {REASON_LABEL[s.reason] || s.reason}
                       </Badge>
+                      {s.detail && (
+                        <div className="mt-1 text-xs text-gray-500">{s.detail}</div>
+                      )}
                     </td>
                     <td className="p-3 text-gray-500 whitespace-nowrap">
                       {new Date(s.created_at).toLocaleString("fr-BE", {

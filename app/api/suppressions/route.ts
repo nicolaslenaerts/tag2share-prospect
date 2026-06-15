@@ -31,11 +31,15 @@ export async function GET(req: Request) {
   return ok({ suppressions: data, counts, total: (all ?? []).length });
 }
 
-// Ajout manuel d'un email à exclure.
+// Ajout manuel d'un email à exclure (avec raison libre optionnelle dans `detail`).
 export async function POST(req: Request) {
-  const { email, reason } = await readJson<{ email: string; reason?: string }>(req);
+  const { email, reason, detail } = await readJson<{
+    email: string;
+    reason?: string;
+    detail?: string;
+  }>(req);
   if (!email || !email.includes("@")) return fail("Email valide requis.");
-  await addSuppression(email, (reason as any) || "manual");
+  await addSuppression(email, (reason as any) || "manual", detail?.trim() || undefined);
   return ok({ added: normEmail(email) }, 201);
 }
 

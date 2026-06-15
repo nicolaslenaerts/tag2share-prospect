@@ -802,6 +802,16 @@ function RecipientList({
       setMsg("Erreur test : " + (e as Error).message);
     }
   }
+  async function remove(r: Recipient) {
+    const who = r.prospect.name || r.to_email || r.prospect.email || "ce contact";
+    if (!confirm(`Retirer ${who} de cette campagne ?`)) return;
+    await api(`/api/campaigns/${campaignId}/recipients`, {
+      method: "DELETE",
+      json: { recipientId: r.id },
+    });
+    setMsg("Contact retiré de la campagne.");
+    reload();
+  }
 
   if (recipients.length === 0)
     return (
@@ -831,6 +841,7 @@ function RecipientList({
               onToggle={() => setOpenId(openId === r.id ? null : r.id)}
               patch={patch}
               sendTest={sendTest}
+              remove={remove}
             />
           ))}
         </tbody>
@@ -848,11 +859,12 @@ function statusColor(s: string): any {
 }
 
 function RecipientRow({
-  r, campaign, open, onToggle, patch, sendTest,
+  r, campaign, open, onToggle, patch, sendTest, remove,
 }: {
   r: Recipient; campaign: Campaign; open: boolean; onToggle: () => void;
   patch: (id: string, fields: any) => void;
   sendTest: (r: Recipient, testEmail: string) => void;
+  remove: (r: Recipient) => void;
 }) {
   const [testEmail, setTestEmail] = useState("");
   const [cs, setCs] = useState(r.custom_subject || "");
@@ -906,7 +918,13 @@ function RecipientRow({
                 >
                   Test
                 </Button>
-                {r.status !== "approved" ? (
+                {r.suppressed ? (
+                  r.status === "approved" ? (
+                    <Button variant="ghost" onClick={() => patch(r.id, { status: "draft" })}>
+                      Désapprouver
+                    </Button>
+                  ) : null
+                ) : r.status !== "approved" ? (
                   <Button onClick={() => patch(r.id, { status: "approved" })}>Approuver</Button>
                 ) : (
                   <Button variant="ghost" onClick={() => patch(r.id, { status: "draft" })}>
@@ -915,6 +933,14 @@ function RecipientRow({
                 )}
               </>
             )}
+            <Button
+              variant="ghost"
+              onClick={() => remove(r)}
+              className="text-red-600"
+              title="Retirer ce contact de la campagne"
+            >
+              Retirer
+            </Button>
           </div>
         </td>
       </tr>
