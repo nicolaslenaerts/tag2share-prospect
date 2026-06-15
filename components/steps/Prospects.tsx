@@ -22,6 +22,7 @@ type Prospect = {
   emailed?: boolean;
   emailed_at?: string | null;
   emailed_campaigns?: string[];
+  suppressed?: boolean;
 };
 
 export function Prospects({ onNext }: { onNext: () => void }) {
@@ -232,6 +233,11 @@ export function Prospects({ onNext }: { onNext: () => void }) {
                             }
                           >
                             <Badge color="amber">✉ déjà contacté</Badge>
+                          </span>
+                        )}
+                        {p.suppressed && (
+                          <span title="Désinscrit / bounce / plainte : ne sera jamais recontacté">
+                            <Badge color="red">⛔ désinscrit</Badge>
                           </span>
                         )}
                       </div>

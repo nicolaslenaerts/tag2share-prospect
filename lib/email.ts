@@ -43,6 +43,11 @@ export function productsMoreBlock(featuredKey?: string | null): string {
 export const LOGO_URL =
   "https://rfvjlmojryoovnpyotgf.supabase.co/storage/v1/object/public/mail/tag2share-logo.png";
 
+/** Identité expéditeur affichée dans le footer (exigence RGPD / anti-spam). */
+export const SENDER_NAME = process.env.SENDER_NAME || "Tag2Share";
+export const SENDER_ADDRESS = process.env.SENDER_ADDRESS || ""; // adresse postale, ex: "Rue X 1, 1000 Bruxelles, Belgique"
+export const SENDER_CONTACT = process.env.SENDER_CONTACT || "tag2share.com";
+
 export type MergeData = {
   name?: string;
   contact_name?: string;
@@ -132,6 +137,7 @@ export function buildRecipientEmail(args: {
     product?: string | null;
   } | null;
   overrideData?: Partial<MergeData>;
+  unsubscribeUrl?: string | null;
 }): { subject: string; html: string } {
   const seg = args.segment;
   const data = mergeDataFromProspect(args.prospect, args.overrideData, seg?.product);
@@ -145,6 +151,7 @@ export function buildRecipientEmail(args: {
   const html = noEmDash(
     wrapEmail(enhanceLinks(renderMerge(bodyTpl, data)), {
       tagline: args.campaign.email_tagline,
+      unsubscribeUrl: args.unsubscribeUrl ?? null,
     })
   );
   return { subject, html };
@@ -212,10 +219,19 @@ export const DEFAULT_TAGLINE =
  */
 export function wrapEmail(
   bodyHtml: string,
-  opts?: { logoUrl?: string; tagline?: string | null }
+  opts?: { logoUrl?: string; tagline?: string | null; unsubscribeUrl?: string | null }
 ): string {
   const logo = opts?.logoUrl || LOGO_URL;
   const tagline = opts?.tagline == null ? DEFAULT_TAGLINE : opts.tagline;
+  const identityLine = [SENDER_NAME, SENDER_ADDRESS, SENDER_CONTACT]
+    .filter(Boolean)
+    .join(" · ");
+  const unsubLine = opts?.unsubscribeUrl
+    ? `<p style="margin:8px 0 0;color:#999999;font-size:12px;">
+            Vous recevez cet email professionnel car vos coordonnées sont publiques.
+            <a href="${opts.unsubscribeUrl}" style="color:#999999;text-decoration:underline;">Se désinscrire</a>
+          </p>`
+    : "";
   const taglineRow = tagline.trim()
     ? `<tr><td style="background:rgb(20,74,102);padding:14px 30px;text-align:center;">
           <p style="margin:0;color:#ffffff;font-size:14px;font-weight:600;letter-spacing:0.3px;">
@@ -241,7 +257,8 @@ export function wrapEmail(
           ${bodyHtml}
         </td></tr>
         <tr><td style="padding:24px 30px;background-color:#f8f9fa;text-align:center;border-top:1px solid #e9ecef;">
-          <p style="margin:0;color:#999999;font-size:12px;">© ${new Date().getFullYear()} Tag2Share - Objets connectés NFC &amp; QR</p>
+          <p style="margin:0;color:#999999;font-size:12px;">© ${new Date().getFullYear()} ${identityLine}</p>
+          ${unsubLine}
         </td></tr>
       </table>
     </td></tr>

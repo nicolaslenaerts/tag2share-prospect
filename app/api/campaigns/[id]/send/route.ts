@@ -2,16 +2,22 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { ok, fail, readJson } from "@/lib/http";
 import { buildRecipientEmail } from "@/lib/email";
 import { sendEmail } from "@/lib/resend";
+import { suppressedSet, normEmail } from "@/lib/suppression";
+import { validateSendable } from "@/lib/email-validation";
+import { unsubscribeUrl } from "@/lib/unsubscribe";
 
 export const runtime = "nodejs";
-export const maxDuration = 120;
+export const maxDuration = 300;
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
- * Envoi RÉEL aux prospects. SÉCURITÉ :
- * - exige confirm === true (accord explicite),
- * - n'envoie qu'aux recipientIds explicitement fournis,
- * - chaque destinataire doit avoir le statut "approved" et un email valide,
- * - ignore ceux déjà envoyés.
+ * Envoi RÉEL aux prospects. SÉCURITÉ & délivrabilité :
+ * - exige confirm === true, n'envoie qu'aux recipientIds fournis et "approved",
+ * - ignore les emails de la liste de suppression (désinscrits / bounces / plaintes),
+ * - valide chaque adresse (format, no-reply, MX) pour limiter les bounces,
+ * - respecte un plafond quotidien (DAILY_SEND_CAP) et un délai entre envois (SEND_DELAY_MS),
+ * - ajoute le lien + l'en-tête List-Unsubscribe.
  */
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -29,7 +35,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const db = supabaseAdmin();
   const { data: campaign } = await db
     .from("campaigns")
-    .select("*, segment:segments(*)")
+    .select("*")
     .eq("id", id)
     .single();
   if (!campaign) return fail("Campagne introuvable.", 404);
@@ -40,6 +46,25 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     .eq("campaign_id", id)
     .in("id", recipientIds);
   if (error) return fail(error.message, 500);
+
+  // Plafond quotidien (0 = illimité) : compte les envois déjà faits aujourd'hui.
+  const dailyCap = Number(process.env.DAILY_SEND_CAP || 0);
+  const delayMs = Number(process.env.SEND_DELAY_MS || 1200);
+  let remaining = Infinity;
+  if (dailyCap > 0) {
+    const startOfDay = new Date();
+    startOfDay.setUTCHours(0, 0, 0, 0);
+    const { count } = await db
+      .from("campaign_recipients")
+      .select("id", { count: "exact", head: true })
+      .eq("status", "sent")
+      .gte("sent_at", startOfDay.toISOString());
+    remaining = Math.max(0, dailyCap - (count ?? 0));
+  }
+
+  // Liste de suppression pour toutes les adresses concernées.
+  const emails = (recipients ?? []).map((r) => r.to_email || r.prospect?.email || "");
+  const suppressed = await suppressedSet(emails);
 
   const results: any[] = [];
   for (const r of recipients || []) {
@@ -57,16 +82,53 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       continue;
     }
 
+    // Désinscription / bounce / plainte : on ne renvoie jamais.
+    if (suppressed.has(normEmail(to))) {
+      await db
+        .from("campaign_recipients")
+        .update({ status: "skipped", error: "liste de suppression" })
+        .eq("id", r.id);
+      results.push({ id: r.id, to, skipped: "supprimé/désinscrit" });
+      continue;
+    }
+
+    // Validation (format, no-reply, MX) pour éviter les bounces.
+    const v = await validateSendable(to);
+    if (!v.ok) {
+      await db
+        .from("campaign_recipients")
+        .update({ status: "failed", error: `email invalide : ${v.reason}` })
+        .eq("id", r.id);
+      results.push({ id: r.id, to, error: `email invalide : ${v.reason}` });
+      continue;
+    }
+
+    // Plafond quotidien atteint : on garde "approved" pour reprendre plus tard.
+    if (remaining <= 0) {
+      results.push({ id: r.id, to, skipped: "plafond quotidien atteint" });
+      continue;
+    }
+
+    const unsub = unsubscribeUrl(to);
     const { subject, html } = buildRecipientEmail({
       campaign,
       recipient: r,
       prospect: r.prospect,
-      // Produit résolu depuis le segment d'origine du prospect.
-      segment: r.prospect?.segment,
+      segment: r.prospect?.segment, // produit du segment d'origine
+      unsubscribeUrl: unsub,
     });
 
     try {
-      const data = await sendEmail({ to, subject, html, replyTo });
+      const data = await sendEmail({
+        to,
+        subject,
+        html,
+        replyTo,
+        headers: {
+          "List-Unsubscribe": `<${unsub}>`,
+          "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+        },
+      });
       await db
         .from("campaign_recipients")
         .update({
@@ -77,6 +139,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         })
         .eq("id", r.id);
       results.push({ id: r.id, to, sent: true });
+      remaining -= 1;
+      if (delayMs > 0) await sleep(delayMs);
     } catch (e) {
       await db
         .from("campaign_recipients")
@@ -86,5 +150,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }
   }
 
-  return ok({ results });
+  const sent = results.filter((x) => x.sent).length;
+  const capped = results.some((x) => x.skipped === "plafond quotidien atteint");
+  return ok({ results, sent, capped });
 }

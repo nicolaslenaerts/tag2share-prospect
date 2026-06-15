@@ -2,6 +2,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { ok, fail, readJson } from "@/lib/http";
 import { buildRecipientEmail, type MergeData } from "@/lib/email";
 import { sendEmail } from "@/lib/resend";
+import { unsubscribeUrl } from "@/lib/unsubscribe";
 
 export const runtime = "nodejs";
 
@@ -35,6 +36,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     .single();
   if (!campaign || !recipient) return fail("Campagne ou destinataire introuvable.", 404);
 
+  const realEmail = recipient.to_email || recipient.prospect?.email;
   const { subject, html } = buildRecipientEmail({
     campaign,
     recipient,
@@ -42,6 +44,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     // Produit résolu depuis le segment d'origine du prospect.
     segment: recipient.prospect?.segment,
     overrideData,
+    unsubscribeUrl: realEmail ? unsubscribeUrl(realEmail) : null,
   });
 
   try {

@@ -2,6 +2,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { ok, fail, readJson } from "@/lib/http";
 import { buildRecipientEmail, type MergeData } from "@/lib/email";
 import { sendEmail } from "@/lib/resend";
+import { unsubscribeUrl } from "@/lib/unsubscribe";
 
 export const runtime = "nodejs";
 
@@ -34,6 +35,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     recipient: {},
     prospect: data || {},
     segment: product ? { product } : null,
+    unsubscribeUrl: unsubscribeUrl(to),
   });
 
   try {

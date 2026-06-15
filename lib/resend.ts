@@ -17,9 +17,10 @@ export type SendArgs = {
   subject: string;
   html: string;
   replyTo?: string;
+  headers?: Record<string, string>;
 };
 
-export async function sendEmail({ to, subject, html, replyTo }: SendArgs) {
+export async function sendEmail({ to, subject, html, replyTo, headers }: SendArgs) {
   const resend = resendClient();
   const { data, error } = await resend.emails.send({
     from,
@@ -27,6 +28,7 @@ export async function sendEmail({ to, subject, html, replyTo }: SendArgs) {
     subject,
     html,
     ...(replyTo ? { replyTo } : {}),
+    ...(headers ? { headers } : {}),
   });
   if (error) throw new Error(error.message || JSON.stringify(error));
   return data;

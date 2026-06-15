@@ -17,6 +17,7 @@ type Prospect = {
   segment?: Segment;
   segments?: Segment[];
   emailed?: boolean; emailed_at?: string | null; emailed_campaigns?: string[];
+  suppressed?: boolean;
 };
 type Recipient = {
   id: string; status: string; to_email?: string; custom_subject?: string;
@@ -250,7 +251,11 @@ function CampaignEditor({
       return v != null && String(v).trim() !== "";
     });
   const base = prospects.filter(
-    (p) => p.email && !recipients.some((r) => r.prospect.id === p.id) && inTargetSegments(p)
+    (p) =>
+      p.email &&
+      !p.suppressed && // jamais les désinscrits / bounces / plaintes
+      !recipients.some((r) => r.prospect.id === p.id) &&
+      inTargetSegments(p)
   );
   const eligible = base.filter(hasAllFields);
   const incompleteCount = base.length - eligible.length;
@@ -305,12 +310,18 @@ function CampaignEditor({
       setMsg("Envoi annulé.");
       return;
     }
-    const r = await api<{ results: any[] }>(`/api/campaigns/${campaign.id}/send`, {
-      method: "POST",
-      json: { recipientIds: approved.map((x) => x.id), confirm: true },
-    });
-    const sent = r.results.filter((x) => x.sent).length;
-    setMsg(`${sent} email(s) envoyé(s).`);
+    const r = await api<{ results: any[]; sent: number; capped: boolean }>(
+      `/api/campaigns/${campaign.id}/send`,
+      {
+        method: "POST",
+        json: { recipientIds: approved.map((x) => x.id), confirm: true },
+      }
+    );
+    const skipped = r.results.filter((x) => x.skipped || x.error).length;
+    let m = `${r.sent} email(s) envoyé(s).`;
+    if (skipped) m += ` ${skipped} ignoré(s) (désinscrits, invalides ou non envoyés).`;
+    if (r.capped) m += " Plafond quotidien atteint : relancez demain pour le reste.";
+    setMsg(m);
     reload();
   }
 
