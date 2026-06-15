@@ -37,6 +37,38 @@ function suppressionLabel(reason?: string | null) {
   return SUPPRESSION_LABEL[reason || ""] || "⛔ exclu";
 }
 
+// Groupe de filtres en pastilles (un seul choix actif).
+function PillGroup<T extends string>({
+  label, value, onChange, options,
+}: {
+  label: string;
+  value: T;
+  onChange: (v: T) => void;
+  options: { key: T; label: string }[];
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className="text-xs font-medium text-gray-600">{label} :</span>
+      <div className="flex flex-wrap gap-1">
+        {options.map((o) => (
+          <button
+            key={o.key}
+            onClick={() => onChange(o.key)}
+            className={
+              "rounded-full px-3 py-1 text-xs font-medium " +
+              (value === o.key
+                ? "bg-brand text-white"
+                : "bg-gray-100 text-gray-700 hover:bg-gray-200")
+            }
+          >
+            {o.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // En-tête de colonne triable.
 function SortTh({
   label, k, sortKey, sortDir, onSort,
@@ -86,11 +118,24 @@ export function Prospects({ onNext }: { onNext: () => void }) {
   const [error, setError] = useState("");
   const [sortKey, setSortKey] = useState<SortKey | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const [fEnriched, setFEnriched] = useState<"all" | "yes" | "no">("all");
+  const [fEmail, setFEmail] = useState<"all" | "yes" | "no">("all");
+
+  const filtered = useMemo(() => {
+    return list.filter((p) => {
+      if (fEnriched === "yes" && p.status !== "enriched") return false;
+      if (fEnriched === "no" && p.status === "enriched") return false;
+      const hasEmail = !!(p.email && p.email.trim());
+      if (fEmail === "yes" && !hasEmail) return false;
+      if (fEmail === "no" && hasEmail) return false;
+      return true;
+    });
+  }, [list, fEnriched, fEmail]);
 
   const sorted = useMemo(() => {
-    if (!sortKey) return list;
+    if (!sortKey) return filtered;
     const dir = sortDir === "asc" ? 1 : -1;
-    return [...list].sort((a, b) => {
+    return [...filtered].sort((a, b) => {
       const va = sortValue(a, sortKey);
       const vb = sortValue(b, sortKey);
       if (typeof va === "number" && typeof vb === "number") return (va - vb) * dir;
@@ -100,7 +145,7 @@ export function Prospects({ onNext }: { onNext: () => void }) {
       if (sa && !sb) return -1;
       return sa.localeCompare(sb, "fr", { sensitivity: "base" }) * dir;
     });
-  }, [list, sortKey, sortDir]);
+  }, [filtered, sortKey, sortDir]);
 
   function toggleSort(key: SortKey) {
     if (sortKey === key) {
@@ -128,9 +173,19 @@ export function Prospects({ onNext }: { onNext: () => void }) {
       return n;
     });
   }
+  // Sélectionne/désélectionne tous les prospects actuellement visibles (filtrés).
   function toggleAll() {
-    setSel((s) => (s.size === list.length ? new Set() : new Set(list.map((p) => p.id))));
+    const ids = filtered.map((p) => p.id);
+    setSel((s) => {
+      const allSelected = ids.length > 0 && ids.every((id) => s.has(id));
+      const n = new Set(s);
+      if (allSelected) ids.forEach((id) => n.delete(id));
+      else ids.forEach((id) => n.add(id));
+      return n;
+    });
   }
+  const allVisibleSelected =
+    filtered.length > 0 && filtered.every((p) => sel.has(p.id));
 
   async function enrich() {
     if (sel.size === 0) return;
@@ -180,7 +235,13 @@ export function Prospects({ onNext }: { onNext: () => void }) {
       <Card className="p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h2 className="text-lg font-bold">3. Prospects ({list.length})</h2>
+            <h2 className="text-lg font-bold">
+              3. Prospects (
+              {filtered.length === list.length
+                ? list.length
+                : `${filtered.length}/${list.length}`}
+              )
+            </h2>
             <p className="text-sm text-gray-500">
               Sélectionnez puis « Enrichir » pour extraire email, contact et logo depuis
               leur site. Vous pouvez corriger chaque champ.
@@ -196,6 +257,31 @@ export function Prospects({ onNext }: { onNext: () => void }) {
         {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
       </Card>
 
+      <Card className="p-4">
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+          <PillGroup
+            label="Enrichissement"
+            value={fEnriched}
+            onChange={setFEnriched}
+            options={[
+              { key: "all", label: "Tous" },
+              { key: "yes", label: "Enrichis" },
+              { key: "no", label: "Non enrichis" },
+            ]}
+          />
+          <PillGroup
+            label="Email"
+            value={fEmail}
+            onChange={setFEmail}
+            options={[
+              { key: "all", label: "Tous" },
+              { key: "yes", label: "Avec email" },
+              { key: "no", label: "Sans email" },
+            ]}
+          />
+        </div>
+      </Card>
+
       <Card className="overflow-hidden">
         {loading ? (
           <div className="p-8 text-center text-gray-400">
@@ -205,6 +291,10 @@ export function Prospects({ onNext }: { onNext: () => void }) {
           <p className="p-8 text-center text-sm text-gray-400">
             Aucun prospect. Lancez une recherche à l'étape 2.
           </p>
+        ) : sorted.length === 0 ? (
+          <p className="p-8 text-center text-sm text-gray-400">
+            Aucun prospect ne correspond aux filtres.
+          </p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -213,7 +303,7 @@ export function Prospects({ onNext }: { onNext: () => void }) {
                   <th className="p-3">
                     <input
                       type="checkbox"
-                      checked={sel.size === list.length && list.length > 0}
+                      checked={allVisibleSelected}
                       onChange={toggleAll}
                     />
                   </th>
