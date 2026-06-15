@@ -2,7 +2,13 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import { Button, Card, Input, Textarea, Badge, Spinner, cn } from "@/components/ui";
-import { MERGE_FIELDS, renderMerge, mergeDataFromProspect, DEFAULT_TAGLINE } from "@/lib/email";
+import {
+  MERGE_FIELDS,
+  renderMerge,
+  mergeDataFromProspect,
+  DEFAULT_TAGLINE,
+  buildRecipientEmail,
+} from "@/lib/email";
 import { getProduct, normalizeProductKey, PRODUCT_LIST } from "@/lib/products";
 
 type Segment = { id: string; label?: string; product?: string };
@@ -518,7 +524,7 @@ function CampaignEditor({
       />
 
       <RecipientList
-        campaignId={campaign.id}
+        campaign={campaign}
         recipients={recipients}
         reload={reload}
         setMsg={setMsg}
@@ -769,11 +775,12 @@ function TestSend({
 }
 
 function RecipientList({
-  campaignId, recipients, reload, setMsg,
+  campaign, recipients, reload, setMsg,
 }: {
-  campaignId: string;
+  campaign: Campaign;
   recipients: Recipient[]; reload: () => void; setMsg: (s: string) => void;
 }) {
+  const campaignId = campaign.id;
   const [openId, setOpenId] = useState<string | null>(null);
 
   async function patch(recipientId: string, fields: any) {
@@ -819,6 +826,7 @@ function RecipientList({
             <RecipientRow
               key={r.id}
               r={r}
+              campaign={campaign}
               open={openId === r.id}
               onToggle={() => setOpenId(openId === r.id ? null : r.id)}
               patch={patch}
@@ -840,9 +848,9 @@ function statusColor(s: string): any {
 }
 
 function RecipientRow({
-  r, open, onToggle, patch, sendTest,
+  r, campaign, open, onToggle, patch, sendTest,
 }: {
-  r: Recipient; open: boolean; onToggle: () => void;
+  r: Recipient; campaign: Campaign; open: boolean; onToggle: () => void;
   patch: (id: string, fields: any) => void;
   sendTest: (r: Recipient, testEmail: string) => void;
 }) {
@@ -851,6 +859,18 @@ function RecipientRow({
   const [ch, setCh] = useState(r.custom_html || "");
   // Produit affiché = produit du segment d'origine du prospect (comme à l'envoi).
   const product = getProduct(r.prospect.segment?.product);
+  // Email déjà traité (envoyé ou échoué) : plus d'édition/test, seulement un aperçu.
+  const locked = r.status === "sent" || r.status === "failed";
+
+  // Aperçu du mail tel qu'il (sera) envoyé — rendu identique à l'envoi réel,
+  // hors lien de désinscription signé (placeholder en aperçu).
+  const preview = buildRecipientEmail({
+    campaign,
+    recipient: { custom_subject: r.custom_subject, custom_html: r.custom_html },
+    prospect: r.prospect,
+    segment: r.prospect.segment,
+    unsubscribeUrl: "#",
+  });
 
   return (
     <>
@@ -875,26 +895,49 @@ function RecipientRow({
         <td className="p-3">
           <div className="flex flex-wrap gap-1">
             <Button variant="ghost" onClick={onToggle}>
-              {open ? "Fermer" : "Adapter"}
+              {open ? "Fermer" : locked ? "Aperçu" : "Adapter"}
             </Button>
-            <Button
-              variant="outline"
-              onClick={() => sendTest(r, testEmail)}
-              title="Envoie un test à votre adresse"
-            >
-              Test
-            </Button>
-            {r.status !== "approved" ? (
-              <Button onClick={() => patch(r.id, { status: "approved" })}>Approuver</Button>
-            ) : (
-              <Button variant="ghost" onClick={() => patch(r.id, { status: "draft" })}>
-                Désapprouver
-              </Button>
+            {!locked && (
+              <>
+                <Button
+                  variant="outline"
+                  onClick={() => sendTest(r, testEmail)}
+                  title="Envoie un test à votre adresse"
+                >
+                  Test
+                </Button>
+                {r.status !== "approved" ? (
+                  <Button onClick={() => patch(r.id, { status: "approved" })}>Approuver</Button>
+                ) : (
+                  <Button variant="ghost" onClick={() => patch(r.id, { status: "draft" })}>
+                    Désapprouver
+                  </Button>
+                )}
+              </>
             )}
           </div>
         </td>
       </tr>
-      {open && (
+      {open && locked && (
+        <tr className="bg-gray-50">
+          <td colSpan={4} className="p-4">
+            <div className="space-y-2">
+              <div className="text-sm">
+                <span className="text-gray-500">Sujet : </span>
+                <span className="font-medium">{preview.subject}</span>
+              </div>
+              <iframe
+                title={`Aperçu email ${r.prospect.name}`}
+                srcDoc={preview.html}
+                className="w-full rounded-lg border border-gray-200 bg-white"
+                style={{ height: 480 }}
+              />
+              {r.error && <p className="text-sm text-red-600">Erreur : {r.error}</p>}
+            </div>
+          </td>
+        </tr>
+      )}
+      {open && !locked && (
         <tr className="bg-gray-50">
           <td colSpan={4} className="p-4">
             <div className="space-y-3">
