@@ -28,7 +28,24 @@ const SOCIAL_HOSTS: Record<string, string> = {
   "youtube.com": "youtube",
 };
 
-async function fetchHtml(url: string, timeoutMs = 10000): Promise<string | null> {
+/** Résout `fallback` si la promesse ne répond pas dans le délai imparti. */
+function withTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return new Promise((resolve) => {
+    const t = setTimeout(() => resolve(fallback), ms);
+    p.then(
+      (v) => {
+        clearTimeout(t);
+        resolve(v);
+      },
+      () => {
+        clearTimeout(t);
+        resolve(fallback);
+      }
+    );
+  });
+}
+
+async function fetchHtml(url: string, timeoutMs = 5000): Promise<string | null> {
   try {
     const controller = new AbortController();
     const t = setTimeout(() => controller.abort(), timeoutMs);
@@ -129,13 +146,19 @@ function findContactLinks(html: string, baseUrl: string): string[] {
   return out;
 }
 
+// Budget de temps total par prospect : garde l'enrichissement sous la limite
+// d'exécution de la fonction (même un plan Vercel plafonné à 10 s).
+const ENRICH_BUDGET_MS = 8000;
+
 export async function enrichWebsite(
   website: string,
   businessName: string
 ): Promise<Enrichment> {
+  const start = Date.now();
+  const remaining = () => ENRICH_BUDGET_MS - (Date.now() - start);
   const result: Enrichment = { emails: [], socials: {}, pages_fetched: [] };
 
-  const home = await fetchHtml(website);
+  const home = await fetchHtml(website, Math.min(4500, remaining()));
   const pages: string[] = [];
   if (home) {
     pages.push(website);
@@ -147,51 +170,51 @@ export async function enrichWebsite(
   }
 
   // Si pas d'email : suivre les VRAIS liens contact/légaux de la page d'accueil,
-  // puis quelques chemins fréquents en secours.
-  if (result.emails.length === 0) {
+  // puis quelques chemins fréquents en secours. Pages testées EN PARALLÈLE et
+  // plafonnées pour rester dans le budget de temps.
+  if (result.emails.length === 0 && remaining() > 1500) {
     const candidates: string[] = [];
     if (home) candidates.push(...findContactLinks(home, website));
-    for (const path of [
-      "/contact",
-      "/contactez-nous",
-      "/nous-contacter",
-      "/contact-us",
-      "/mentions-legales",
-      "/cgv",
-    ]) {
+    for (const path of ["/contact", "/contactez-nous", "/contact-us", "/mentions-legales"]) {
       const u = absoluteUrl(website, path);
       if (u) candidates.push(u);
     }
-    // dédoublonne, limite à 5 pages
+    // dédoublonne, limite à 3 pages
+    const unique: string[] = [];
     const seen = new Set<string>();
     for (const u of candidates) {
-      if (seen.has(u) || seen.size >= 5) continue;
+      if (seen.has(u)) continue;
       seen.add(u);
-      const html = await fetchHtml(u);
-      if (html) {
-        pages.push(u);
-        const c = extractFromHtml(html, u);
-        c.emails.forEach((e) => result.emails.push(e));
-        Object.assign(result.socials, c.socials);
-        if (result.emails.length) break;
-      }
+      unique.push(u);
+      if (unique.length >= 3) break;
+    }
+    const timeout = Math.min(4000, Math.max(1000, remaining() - 1500));
+    const fetched = await Promise.all(
+      unique.map(async (u) => ({ u, html: await fetchHtml(u, timeout) }))
+    );
+    for (const { u, html } of fetched) {
+      if (!html) continue;
+      pages.push(u);
+      const c = extractFromHtml(html, u);
+      c.emails.forEach((e) => result.emails.push(e));
+      Object.assign(result.socials, c.socials);
     }
   }
 
   result.emails = [...new Set(result.emails)];
   result.pages_fetched = pages;
 
-  // Déduction du nom de contact via Gemini (best effort, n'échoue jamais le flux)
-  if (home) {
-    try {
-      const snippet = home.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").slice(0, 6000);
-      const data = await geminiJSON<{ contact_name?: string }>(
+  // Déduction du nom de contact via Gemini (best effort, borné, n'échoue jamais le flux).
+  if (home && remaining() > 1500) {
+    const snippet = home.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").slice(0, 6000);
+    const data = await withTimeout<{ contact_name?: string } | null>(
+      geminiJSON<{ contact_name?: string }>(
         `Voici le texte du site de l'entreprise "${businessName}". Identifie le nom de la personne de contact (gérant, propriétaire, responsable) si mentionné. Réponds en JSON strict: {"contact_name": "Prénom Nom" | null}.\n\nTEXTE:\n${snippet}`
-      );
-      if (data?.contact_name) result.contact_name = data.contact_name;
-    } catch {
-      /* best effort */
-    }
+      ),
+      Math.min(3000, remaining()),
+      null
+    );
+    if (data?.contact_name) result.contact_name = data.contact_name;
   }
 
   return result;

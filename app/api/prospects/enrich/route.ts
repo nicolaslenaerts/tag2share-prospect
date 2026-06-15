@@ -41,10 +41,11 @@ export async function POST(req: Request) {
     }
   }
 
-  // Traitement par lots de 5 (parallélisme) pour éviter les timeouts.
+  // Traitement par petits lots parallèles. Chaque prospect est borné en temps
+  // (voir ENRICH_BUDGET_MS), donc la durée d'invocation ≈ le prospect le plus lent.
   const list = prospects || [];
   const updated: any[] = [];
-  const BATCH = 5;
+  const BATCH = 3;
   for (let i = 0; i < list.length; i += BATCH) {
     const batch = list.slice(i, i + BATCH);
     updated.push(...(await Promise.all(batch.map(enrichOne))));

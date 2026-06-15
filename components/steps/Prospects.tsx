@@ -114,6 +114,7 @@ export function Prospects({ onNext }: { onNext: () => void }) {
   const [list, setList] = useState<Prospect[]>([]);
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [enriching, setEnriching] = useState(false);
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [sortKey, setSortKey] = useState<SortKey | null>(null);
@@ -187,17 +188,29 @@ export function Prospects({ onNext }: { onNext: () => void }) {
   const allVisibleSelected =
     filtered.length > 0 && filtered.every((p) => sel.has(p.id));
 
+  // Enrichissement par petits lots séquentiels : chaque requête reste courte,
+  // ce qui évite les timeouts de fonction quand on sélectionne beaucoup de prospects.
   async function enrich() {
-    if (sel.size === 0) return;
+    const ids = [...sel];
+    if (ids.length === 0) return;
     setEnriching(true);
     setError("");
+    setProgress({ done: 0, total: ids.length });
+    const CHUNK = 3;
     try {
-      await api("/api/prospects/enrich", { method: "POST", json: { ids: [...sel] } });
-      await load();
+      for (let i = 0; i < ids.length; i += CHUNK) {
+        const chunk = ids.slice(i, i + CHUNK);
+        await api("/api/prospects/enrich", { method: "POST", json: { ids: chunk } });
+        setProgress({ done: Math.min(i + CHUNK, ids.length), total: ids.length });
+      }
     } catch (e) {
-      setError((e as Error).message);
+      setError(
+        `Enrichissement interrompu : ${(e as Error).message}. Les prospects déjà traités sont enregistrés ; relancez sur le reste.`
+      );
     } finally {
+      await load();
       setEnriching(false);
+      setProgress(null);
     }
   }
 
@@ -249,7 +262,14 @@ export function Prospects({ onNext }: { onNext: () => void }) {
           </div>
           <div className="flex gap-2">
             <Button variant="outline" onClick={enrich} disabled={enriching || sel.size === 0}>
-              {enriching ? <Spinner /> : `Enrichir (${sel.size})`}
+              {enriching ? (
+                <span className="inline-flex items-center gap-2">
+                  <Spinner />
+                  {progress ? `${progress.done}/${progress.total}` : null}
+                </span>
+              ) : (
+                `Enrichir (${sel.size})`
+              )}
             </Button>
             <Button onClick={onNext}>Créer une campagne →</Button>
           </div>
