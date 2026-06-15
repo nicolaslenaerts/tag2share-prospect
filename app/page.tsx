@@ -1,5 +1,6 @@
 "use client";
 import { useState } from "react";
+import Link from "next/link";
 import { Segments } from "@/components/steps/Segments";
 import { Search } from "@/components/steps/Search";
 import { Prospects } from "@/components/steps/Prospects";
@@ -28,6 +29,12 @@ export default function Home() {
             Trouver des business pour vos objets connectés (porte-clé, carte, présentoir)
           </p>
         </div>
+        <Link
+          href="/suppressions"
+          className="ml-auto rounded-lg border border-gray-200 px-3 py-2 text-sm font-semibold text-gray-700 hover:border-brand/50"
+        >
+          Liste de suppression
+        </Link>
       </header>
 
       <nav className="mb-8 grid grid-cols-2 gap-2 sm:grid-cols-4">

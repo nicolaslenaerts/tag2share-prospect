@@ -33,6 +33,17 @@ export async function suppressedSet(emails: string[]): Promise<Set<string>> {
   return new Set((data ?? []).map((r) => r.email));
 }
 
+/** Renvoie une map email -> raison de suppression pour les emails fournis. */
+export async function suppressionMap(
+  emails: string[]
+): Promise<Map<string, SuppressionReason>> {
+  const list = Array.from(new Set(emails.map(normEmail).filter(Boolean)));
+  if (list.length === 0) return new Map();
+  const db = supabaseAdmin();
+  const { data } = await db.from("suppressions").select("email, reason").in("email", list);
+  return new Map((data ?? []).map((r) => [r.email, r.reason as SuppressionReason]));
+}
+
 /** True si l'email est dans la liste de suppression. */
 export async function isSuppressed(email: string): Promise<boolean> {
   const set = await suppressedSet([email]);

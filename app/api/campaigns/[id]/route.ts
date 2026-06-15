@@ -1,5 +1,6 @@
 import { supabaseAdmin } from "@/lib/supabase";
 import { ok, fail, readJson } from "@/lib/http";
+import { suppressionMap, normEmail } from "@/lib/suppression";
 
 export const runtime = "nodejs";
 
@@ -32,7 +33,17 @@ export async function GET(_req: Request, { params }: Ctx) {
     .order("created_at", { ascending: true });
   if (rErr) return fail(rErr.message, 500);
 
-  return ok({ campaign, recipients });
+  // Marque les destinataires désinscrits / bouncés / plaints.
+  const suppressed = await suppressionMap(
+    (recipients ?? []).map((r) => r.to_email || r.prospect?.email).filter(Boolean)
+  );
+  const recipientsMarked = (recipients ?? []).map((r) => {
+    const email = r.to_email || r.prospect?.email;
+    const reason = email ? suppressed.get(normEmail(email)) ?? null : null;
+    return { ...r, suppressed: !!reason, suppression_reason: reason };
+  });
+
+  return ok({ campaign, recipients: recipientsMarked });
 }
 
 // Mise à jour du template (sujet/corps/nom/statut)

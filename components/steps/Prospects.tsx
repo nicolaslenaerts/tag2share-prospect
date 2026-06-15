@@ -23,7 +23,19 @@ type Prospect = {
   emailed_at?: string | null;
   emailed_campaigns?: string[];
   suppressed?: boolean;
+  suppression_reason?: string | null;
 };
+
+// Libellé du badge de suppression selon la raison.
+const SUPPRESSION_LABEL: Record<string, string> = {
+  unsubscribe: "⛔ désinscrit",
+  bounce: "✗ adresse invalide",
+  complaint: "⚠ plainte spam",
+  manual: "⛔ exclu",
+};
+function suppressionLabel(reason?: string | null) {
+  return SUPPRESSION_LABEL[reason || ""] || "⛔ exclu";
+}
 
 export function Prospects({ onNext }: { onNext: () => void }) {
   const [list, setList] = useState<Prospect[]>([]);
@@ -236,8 +248,8 @@ export function Prospects({ onNext }: { onNext: () => void }) {
                           </span>
                         )}
                         {p.suppressed && (
-                          <span title="Désinscrit / bounce / plainte : ne sera jamais recontacté">
-                            <Badge color="red">⛔ désinscrit</Badge>
+                          <span title="Ne sera jamais recontacté (liste de suppression)">
+                            <Badge color="red">{suppressionLabel(p.suppression_reason)}</Badge>
                           </span>
                         )}
                       </div>

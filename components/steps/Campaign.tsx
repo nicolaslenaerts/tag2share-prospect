@@ -22,7 +22,18 @@ type Prospect = {
 type Recipient = {
   id: string; status: string; to_email?: string; custom_subject?: string;
   custom_html?: string; sent_at?: string; error?: string; prospect: Prospect;
+  suppressed?: boolean; suppression_reason?: string | null;
 };
+
+const SUPPRESSION_LABEL: Record<string, string> = {
+  unsubscribe: "⛔ désinscrit",
+  bounce: "✗ adresse invalide",
+  complaint: "⚠ plainte spam",
+  manual: "⛔ exclu",
+};
+function suppressionLabel(reason?: string | null) {
+  return SUPPRESSION_LABEL[reason || ""] || "⛔ exclu";
+}
 
 export function Campaign() {
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
@@ -852,7 +863,14 @@ function RecipientRow({
         </td>
         <td className="p-3 text-gray-500">{r.to_email || r.prospect.email || "-"}</td>
         <td className="p-3">
-          <Badge color={statusColor(r.status)}>{r.status}</Badge>
+          <div className="flex flex-col gap-1">
+            <Badge color={statusColor(r.status)}>{r.status}</Badge>
+            {r.suppressed && (
+              <span title="Ne sera pas envoyé (liste de suppression)">
+                <Badge color="red">{suppressionLabel(r.suppression_reason)}</Badge>
+              </span>
+            )}
+          </div>
         </td>
         <td className="p-3">
           <div className="flex flex-wrap gap-1">

@@ -1,6 +1,6 @@
 import { supabaseAdmin } from "@/lib/supabase";
 import { ok, fail, readJson } from "@/lib/http";
-import { suppressedSet, normEmail } from "@/lib/suppression";
+import { suppressionMap, normEmail } from "@/lib/suppression";
 
 export const runtime = "nodejs";
 
@@ -62,19 +62,21 @@ export async function GET(req: Request) {
   }
 
   // Désinscriptions / bounces / plaintes (liste de suppression).
-  const suppressed = await suppressedSet(
+  const suppressed = await suppressionMap(
     (prospects ?? []).map((p) => p.email).filter(Boolean)
   );
 
   const enriched = (prospects ?? []).map((p) => {
     const sentInfo = sentByProspect.get(p.id);
+    const reason = p.email ? suppressed.get(normEmail(p.email)) ?? null : null;
     return {
       ...p,
       segments: segByProspect.get(p.id) ?? [],
       emailed: !!sentInfo,
       emailed_at: sentInfo?.sent_at ?? null,
       emailed_campaigns: sentInfo?.campaigns ?? [],
-      suppressed: p.email ? suppressed.has(normEmail(p.email)) : false,
+      suppressed: !!reason,
+      suppression_reason: reason,
     };
   });
 
