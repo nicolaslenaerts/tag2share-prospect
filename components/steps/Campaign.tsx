@@ -1,0 +1,920 @@
+"use client";
+import { useEffect, useRef, useState } from "react";
+import { api } from "@/lib/api";
+import { Button, Card, Input, Textarea, Badge, Spinner, cn } from "@/components/ui";
+import { MERGE_FIELDS, renderMerge, mergeDataFromProspect, DEFAULT_TAGLINE } from "@/lib/email";
+import { getProduct, normalizeProductKey, PRODUCT_LIST } from "@/lib/products";
+
+type Segment = { id: string; label?: string; product?: string };
+type Campaign = {
+  id: string; name: string; subject: string; body_html: string; status: string;
+  email_tagline?: string | null;
+  segment_id?: string; segments?: Segment[];
+};
+type Prospect = {
+  id: string; name: string; email?: string; contact_name?: string; city?: string;
+  country?: string; category?: string; website?: string; logo_url?: string; status: string;
+  segment?: Segment;
+  segments?: Segment[];
+  emailed?: boolean; emailed_at?: string | null; emailed_campaigns?: string[];
+};
+type Recipient = {
+  id: string; status: string; to_email?: string; custom_subject?: string;
+  custom_html?: string; sent_at?: string; error?: string; prospect: Prospect;
+};
+
+export function Campaign() {
+  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [segments, setSegments] = useState<Segment[]>([]);
+  const [current, setCurrent] = useState<Campaign | null>(null);
+  const [recipients, setRecipients] = useState<Recipient[]>([]);
+  const [prospects, setProspects] = useState<Prospect[]>([]);
+  const [newSegmentIds, setNewSegmentIds] = useState<Set<string>>(new Set());
+  const [msg, setMsg] = useState("");
+
+  async function loadCampaigns() {
+    const r = await api<{ campaigns: Campaign[] }>("/api/campaigns");
+    setCampaigns(r.campaigns);
+  }
+  async function openCampaign(c: Campaign) {
+    const r = await api<{ campaign: Campaign; recipients: Recipient[] }>(
+      `/api/campaigns/${c.id}`
+    );
+    setCurrent(r.campaign);
+    setRecipients(r.recipients);
+  }
+  useEffect(() => {
+    loadCampaigns();
+    api<{ prospects: Prospect[] }>("/api/prospects").then((r) => setProspects(r.prospects));
+    api<{ segments: Segment[] }>("/api/segments").then((r) => setSegments(r.segments));
+  }, []);
+
+  function toggleSegment(id: string) {
+    setNewSegmentIds((s) => {
+      const n = new Set(s);
+      n.has(id) ? n.delete(id) : n.add(id);
+      return n;
+    });
+  }
+
+  async function createCampaign() {
+    if (newSegmentIds.size === 0) return;
+    const labels = segments
+      .filter((s) => newSegmentIds.has(s.id))
+      .map((s) => s.label)
+      .filter(Boolean);
+    const name = prompt(
+      "Nom de la campagne ?",
+      `${labels.join(" + ") || "Prospection"} - ${new Date().toLocaleDateString("fr-BE")}`
+    );
+    if (!name) return;
+    const r = await api<{ campaign: Campaign }>("/api/campaigns", {
+      method: "POST",
+      json: { name, segment_ids: [...newSegmentIds] },
+    });
+    setNewSegmentIds(new Set());
+    await loadCampaigns();
+    openCampaign(r.campaign);
+  }
+
+  if (!current) {
+    return (
+      <Card className="p-5">
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-lg font-bold">4. Campagnes email</h2>
+        </div>
+        <p className="mb-2 text-xs text-gray-400">
+          Une campagne peut viser <b>plusieurs segments</b> : tous leurs prospects seront
+          proposés. L'email se rédige ici (au niveau de la campagne) ; le produit mis en avant
+          s'adapte automatiquement au segment de chaque prospect.
+        </p>
+        <div className="mb-4 rounded-lg border border-gray-200 p-3">
+          <div className="mb-2 text-sm font-medium text-gray-600">
+            Segments ciblés ({newSegmentIds.size})
+          </div>
+          {segments.length === 0 ? (
+            <p className="text-sm text-gray-400">Aucun segment. Validez-en à l'étape 1.</p>
+          ) : (
+            <div className="grid grid-cols-1 gap-1 sm:grid-cols-2">
+              {segments.map((s) => (
+                <label
+                  key={s.id}
+                  className="flex items-center gap-2 rounded border border-gray-100 px-2 py-1 text-sm"
+                >
+                  <input
+                    type="checkbox"
+                    checked={newSegmentIds.has(s.id)}
+                    onChange={() => toggleSegment(s.id)}
+                  />
+                  <span className="truncate">{s.label}</span>
+                </label>
+              ))}
+            </div>
+          )}
+          <div className="mt-3">
+            <Button onClick={createCampaign} disabled={newSegmentIds.size === 0}>
+              + Nouvelle campagne
+            </Button>
+          </div>
+        </div>
+        {campaigns.length === 0 ? (
+          <p className="text-sm text-gray-400">Aucune campagne. Créez-en une.</p>
+        ) : (
+          <ul className="space-y-2">
+            {campaigns.map((c) => (
+              <li
+                key={c.id}
+                className="flex items-center justify-between rounded-lg border border-gray-100 p-3"
+              >
+                <div className="flex flex-wrap items-center gap-1">
+                  <span className="font-semibold">{c.name}</span>{" "}
+                  {(c.segments ?? []).map((s) => (
+                    <Badge key={s.id} color="blue">{s.label}</Badge>
+                  ))}{" "}
+                  <Badge>{c.status}</Badge>
+                </div>
+                <Button variant="outline" onClick={() => openCampaign(c)}>
+                  Ouvrir
+                </Button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
+    );
+  }
+
+  return (
+    <CampaignEditor
+      campaign={current}
+      recipients={recipients}
+      prospects={prospects}
+      allSegments={segments}
+      onBack={() => {
+        setCurrent(null);
+        loadCampaigns();
+      }}
+      reload={() => openCampaign(current)}
+      msg={msg}
+      setMsg={setMsg}
+    />
+  );
+}
+
+function CampaignEditor({
+  campaign, recipients, prospects, allSegments, onBack, reload, msg, setMsg,
+}: {
+  campaign: Campaign; recipients: Recipient[]; prospects: Prospect[];
+  allSegments: Segment[];
+  onBack: () => void; reload: () => void; msg: string; setMsg: (s: string) => void;
+}) {
+  const [subject, setSubject] = useState(campaign.subject);
+  const [body, setBody] = useState(campaign.body_html);
+  const [tagline, setTagline] = useState(campaign.email_tagline ?? DEFAULT_TAGLINE);
+  const [saving, setSaving] = useState(false);
+  const [instruction, setInstruction] = useState("");
+  const [improving, setImproving] = useState(false);
+  const [drafting, setDrafting] = useState(false);
+  const bodyRef = useRef<HTMLTextAreaElement>(null);
+
+  async function draft() {
+    setDrafting(true);
+    try {
+      const labels = (campaign.segments ?? []).map((s) => s.label).filter(Boolean);
+      const r = await api<{ subject: string; body: string }>(
+        "/api/campaigns/draft-email",
+        { method: "POST", json: { labels, instruction: instruction || undefined } }
+      );
+      setSubject(r.subject);
+      setBody(r.body);
+      setMsg("Email rédigé par l'IA. Vérifiez l'aperçu puis enregistrez le template.");
+    } catch (e) {
+      setMsg("Erreur IA : " + (e as Error).message);
+    } finally {
+      setDrafting(false);
+    }
+  }
+
+  async function improve() {
+    if (!instruction.trim()) return;
+    setImproving(true);
+    try {
+      const r = await api<{ subject: string; body: string }>(
+        "/api/campaigns/improve-email",
+        { method: "POST", json: { subject, body, instruction } }
+      );
+      setSubject(r.subject);
+      setBody(r.body);
+      setMsg("Email amélioré par l'IA. Vérifiez l'aperçu puis enregistrez le template.");
+    } catch (e) {
+      setMsg("Erreur IA : " + (e as Error).message);
+    } finally {
+      setImproving(false);
+    }
+  }
+
+  const sample =
+    recipients[0]?.prospect ||
+    prospects[0] || { name: "Le Petit Café", city: "Bruxelles", contact_name: "Marie Dupont" };
+  const data = mergeDataFromProspect(sample as any);
+
+  async function saveTemplate() {
+    setSaving(true);
+    await api(`/api/campaigns/${campaign.id}`, {
+      method: "PATCH",
+      json: { subject, body_html: body, email_tagline: tagline },
+    });
+    setSaving(false);
+    setMsg("Template enregistré.");
+    reload();
+  }
+
+  function insertToken(token: string) {
+    const el = bodyRef.current;
+    if (!el) return setBody((b) => b + " " + token);
+    const start = el.selectionStart;
+    const end = el.selectionEnd;
+    setBody((b) => b.slice(0, start) + token + b.slice(end));
+  }
+
+  // Prospects proposés : rattachés à AU MOINS UN segment de la campagne,
+  // et disposant de TOUTES les infos utilisées par l'email (variables {{...}}
+  // du template, hors variables produit qui viennent du segment).
+  const segIds = (campaign.segments ?? []).map((s) => s.id);
+  const reqFields = requiredFields(subject, body);
+  const inTargetSegments = (p: Prospect) =>
+    segIds.length === 0 || (p.segments ?? []).some((s) => segIds.includes(s.id));
+  const hasAllFields = (p: Prospect) =>
+    reqFields.every((f) => {
+      const v = (p as any)[f];
+      return v != null && String(v).trim() !== "";
+    });
+  const base = prospects.filter(
+    (p) => p.email && !recipients.some((r) => r.prospect.id === p.id) && inTargetSegments(p)
+  );
+  const eligible = base.filter(hasAllFields);
+  const incompleteCount = base.length - eligible.length;
+
+  async function addRecipients(ids: string[]) {
+    if (!ids.length) return;
+    await api(`/api/campaigns/${campaign.id}/recipients`, {
+      method: "POST",
+      json: { prospectIds: ids },
+    });
+    reload();
+  }
+
+  async function addSegment(segmentId: string) {
+    if (!segmentId) return;
+    await api(`/api/campaigns/${campaign.id}/segments`, {
+      method: "POST",
+      json: { segmentId },
+    });
+    reload();
+  }
+  async function removeSegment(segmentId: string) {
+    await api(`/api/campaigns/${campaign.id}/segments`, {
+      method: "DELETE",
+      json: { segmentId },
+    });
+    reload();
+  }
+
+  const campaignSegments = campaign.segments ?? [];
+  const addableSegments = allSegments.filter(
+    (s) => !campaignSegments.some((cs) => cs.id === s.id)
+  );
+
+  // Produits proposés pour le test = ceux des segments de la campagne (sinon tous).
+  const productKeys = Array.from(
+    new Set(campaignSegments.map((s) => normalizeProductKey(s.product)))
+  );
+  const testProducts =
+    productKeys.length > 0
+      ? productKeys.map((k) => getProduct(k))
+      : PRODUCT_LIST;
+
+  const approved = recipients.filter((r) => r.status === "approved");
+
+  async function sendAll() {
+    if (approved.length === 0) return;
+    const typed = prompt(
+      `⚠️ Envoi RÉEL à ${approved.length} prospect(s).\nTapez ENVOYER pour confirmer.`
+    );
+    if (typed !== "ENVOYER") {
+      setMsg("Envoi annulé.");
+      return;
+    }
+    const r = await api<{ results: any[] }>(`/api/campaigns/${campaign.id}/send`, {
+      method: "POST",
+      json: { recipientIds: approved.map((x) => x.id), confirm: true },
+    });
+    const sent = r.results.filter((x) => x.sent).length;
+    setMsg(`${sent} email(s) envoyé(s).`);
+    reload();
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <Button variant="ghost" onClick={onBack}>
+          ← Campagnes
+        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <h2 className="text-lg font-bold">{campaign.name}</h2>
+          {(campaign.segments ?? []).map((s) => (
+            <Badge key={s.id} color="blue">{s.label}</Badge>
+          ))}
+        </div>
+        <Badge color="blue">{recipients.length} destinataires</Badge>
+      </div>
+
+      {msg && (
+        <div className="rounded-lg bg-brand-50 px-4 py-2 text-sm text-brand-700">{msg}</div>
+      )}
+
+      <Card className="p-5">
+        <h3 className="mb-2 font-bold">Segments ciblés</h3>
+        <div className="flex flex-wrap items-center gap-2">
+          {campaignSegments.length === 0 ? (
+            <span className="text-sm text-gray-400">Aucun segment.</span>
+          ) : (
+            campaignSegments.map((s) => (
+              <span
+                key={s.id}
+                className="inline-flex items-center gap-1 rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700"
+              >
+                {s.label}
+                <button
+                  onClick={() => removeSegment(s.id)}
+                  className="ml-0.5 rounded-full px-1 text-blue-500 hover:bg-blue-200"
+                  title="Retirer ce segment"
+                >
+                  ✕
+                </button>
+              </span>
+            ))
+          )}
+          {addableSegments.length > 0 && (
+            <select
+              value=""
+              onChange={(e) => e.target.value && addSegment(e.target.value)}
+              className="rounded-lg border border-gray-300 px-2 py-1 text-sm"
+            >
+              <option value="">+ Ajouter un segment…</option>
+              {addableSegments.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.label}
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
+        <p className="mt-2 text-xs text-gray-400">
+          Les prospects de tous ces segments deviennent éligibles. Le produit mis en avant
+          s'adapte au segment d'origine de chaque prospect.
+        </p>
+      </Card>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Card className="p-5">
+          <h3 className="mb-1 font-bold">Email de la campagne</h3>
+          <p className="mb-3 text-xs text-gray-400">
+            L'email envoyé à tous les destinataires (sauf adaptation individuelle). Les
+            variables {"{{product_*}}"} s'adaptent au produit du segment de chaque prospect.
+          </p>
+          <label className="mb-1 block text-xs font-medium text-gray-600">Sujet</label>
+          <Input value={subject} onChange={(e) => setSubject(e.target.value)} />
+          <label className="mb-1 mt-3 block text-xs font-medium text-gray-600">
+            Accroche sous le logo
+          </label>
+          <Input
+            value={tagline}
+            onChange={(e) => setTagline(e.target.value)}
+            placeholder="Laisser vide pour masquer le bandeau"
+          />
+          <p className="mt-1 text-[11px] text-gray-400">
+            Bandeau bleu affiché sous le logo dans l'email. Vide = pas de bandeau.
+          </p>
+          <label className="mb-1 mt-3 block text-xs font-medium text-gray-600">
+            Corps (HTML, variables {"{{...}}"})
+          </label>
+          <div className="mb-2 flex flex-wrap gap-1">
+            {MERGE_FIELDS.map((f) => (
+              <button
+                key={f.token}
+                onClick={() => insertToken(f.token)}
+                className="rounded border border-gray-200 bg-gray-50 px-2 py-0.5 text-xs hover:bg-gray-100"
+                title={f.label}
+              >
+                {f.token}
+              </button>
+            ))}
+          </div>
+          <Textarea
+            ref={bodyRef}
+            value={body}
+            onChange={(e) => setBody(e.target.value)}
+            rows={14}
+          />
+
+          <div className="mt-3 rounded-lg border border-gray-200 bg-gray-50 p-3">
+            <label className="mb-1 block text-xs font-medium text-gray-600">
+              Rédiger / améliorer avec l'IA
+            </label>
+            <div className="flex flex-wrap gap-2">
+              <Input
+                value={instruction}
+                onChange={(e) => setInstruction(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !improving && instruction.trim()) improve();
+                }}
+                placeholder="ex : plus court et chaleureux, ajoute une accroche sur les avis Google…"
+                className="min-w-[12rem] flex-1"
+              />
+              <Button
+                variant="outline"
+                onClick={improve}
+                disabled={improving || drafting || !instruction.trim()}
+                title="Retravaille l'email actuel en gardant variables, liens et structure"
+              >
+                {improving ? <Spinner /> : "Améliorer"}
+              </Button>
+              <Button
+                variant="ghost"
+                onClick={draft}
+                disabled={drafting || improving}
+                title="Rédige un nouvel email à partir des segments ciblés (l'instruction sert de consigne)"
+              >
+                {drafting ? <Spinner /> : "Rédiger (IA)"}
+              </Button>
+            </div>
+            <p className="mt-1 text-[11px] text-gray-400">
+              <b>Améliorer</b> retravaille l'email actuel (garde vos variables, liens et
+              boutons). <b>Rédiger</b> en génère un nouveau à partir des segments ciblés. Le
+              résultat remplace le sujet/corps : vérifiez l'aperçu puis enregistrez.
+            </p>
+          </div>
+
+          <div className="mt-3">
+            <Button onClick={saveTemplate} disabled={saving}>
+              {saving ? <Spinner /> : "Enregistrer le template"}
+            </Button>
+          </div>
+        </Card>
+
+        <Card className="p-5">
+          <h3 className="mb-2 font-bold">Aperçu (exemple : {sample.name})</h3>
+          <div className="mb-2 rounded bg-gray-50 px-3 py-2 text-sm">
+            <span className="text-gray-400">Sujet : </span>
+            {renderMerge(subject, data)}
+          </div>
+          {tagline.trim() && (
+            <div
+              className="rounded-t border border-gray-100 px-3 py-2 text-center text-xs font-semibold text-white"
+              style={{ background: "rgb(20,74,102)" }}
+            >
+              {tagline}
+            </div>
+          )}
+          <div
+            className={cn(
+              "prose prose-sm max-w-none border border-gray-100 p-4",
+              tagline.trim() ? "rounded-b border-t-0" : "rounded"
+            )}
+            dangerouslySetInnerHTML={{ __html: renderMerge(body, data) }}
+          />
+        </Card>
+      </div>
+
+      <AddRecipients
+        eligible={eligible}
+        segmentIds={segIds}
+        incompleteCount={incompleteCount}
+        requiredFields={reqFields}
+        onAdd={addRecipients}
+      />
+
+      <RecipientList
+        campaignId={campaign.id}
+        recipients={recipients}
+        reload={reload}
+        setMsg={setMsg}
+      />
+
+      <TestSend
+        campaignId={campaign.id}
+        reqFields={reqFields}
+        products={testProducts.map((p) => ({ key: p.key, name: p.name }))}
+        setMsg={setMsg}
+      />
+
+      <Card className="flex items-center justify-between p-5">
+        <div>
+          <h3 className="font-bold">Envoi final</h3>
+          <p className="text-sm text-gray-500">
+            Seuls les destinataires <b>approuvés</b> ({approved.length}) seront envoyés.
+            Confirmation explicite requise.
+          </p>
+        </div>
+        <Button variant="danger" onClick={sendAll} disabled={approved.length === 0}>
+          Envoyer aux {approved.length} approuvés
+        </Button>
+      </Card>
+    </div>
+  );
+}
+
+// Variables produit : résolues depuis le segment, pas depuis le prospect → non requises.
+const PRODUCT_TOKENS = new Set([
+  "product_name", "product_price", "product_url", "config_url", "products_more",
+]);
+
+/** Champs prospect réellement requis = variables {{...}} du template, hors variables produit. */
+function requiredFields(...templates: string[]): string[] {
+  const found = new Set<string>();
+  const re = /\{\{\s*([a-z_]+)\s*\}\}/gi;
+  for (const t of templates) {
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(t || ""))) {
+      const key = m[1].toLowerCase();
+      if (!PRODUCT_TOKENS.has(key)) found.add(key);
+    }
+  }
+  return [...found];
+}
+
+function AddRecipients({
+  eligible, segmentIds, incompleteCount, requiredFields: reqFields, onAdd,
+}: {
+  eligible: Prospect[];
+  segmentIds: string[];
+  incompleteCount: number;
+  requiredFields: string[];
+  onAdd: (ids: string[]) => void;
+}) {
+  const [sel, setSel] = useState<Set<string>>(new Set());
+  if (eligible.length === 0 && incompleteCount === 0) return null;
+  const allSelected = eligible.length > 0 && sel.size === eligible.length;
+  function toggleAll() {
+    setSel(allSelected ? new Set() : new Set(eligible.map((p) => p.id)));
+  }
+  return (
+    <Card className="p-5">
+      <div className="mb-2 flex items-center justify-between">
+        <h3 className="font-bold">Ajouter des destinataires (avec email)</h3>
+        <div className="flex items-center gap-2">
+          <Button variant="ghost" onClick={toggleAll} disabled={eligible.length === 0}>
+            {allSelected ? "Tout désélectionner" : `Tout sélectionner (${eligible.length})`}
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => {
+              onAdd([...sel]);
+              setSel(new Set());
+            }}
+            disabled={sel.size === 0}
+          >
+            Ajouter ({sel.size})
+          </Button>
+        </div>
+      </div>
+      <p className="mb-1 text-xs text-gray-400">
+        <span className="text-amber-600">✉ déjà contacté</span> = un mail lui a déjà été
+        envoyé (toutes campagnes) · <span className="text-amber-600">autre segment</span> = le
+        prospect appartient aussi à un autre segment.
+      </p>
+      {incompleteCount > 0 && (
+        <p className="mb-2 text-xs text-gray-400">
+          {incompleteCount} prospect{incompleteCount > 1 ? "s" : ""} du segment masqué
+          {incompleteCount > 1 ? "s" : ""} : informations manquantes pour l'email
+          {reqFields.length ? ` (requis : ${reqFields.join(", ")})` : ""}.
+        </p>
+      )}
+      <div className="grid max-h-56 grid-cols-1 gap-1 overflow-y-auto sm:grid-cols-2">
+        {eligible.map((p) => {
+          const others = (p.segments ?? []).filter((s) => !segmentIds.includes(s.id));
+          return (
+            <label
+              key={p.id}
+              className="flex items-center gap-2 rounded border border-gray-100 px-2 py-1 text-sm"
+            >
+              <input
+                type="checkbox"
+                checked={sel.has(p.id)}
+                onChange={() =>
+                  setSel((s) => {
+                    const n = new Set(s);
+                    n.has(p.id) ? n.delete(p.id) : n.add(p.id);
+                    return n;
+                  })
+                }
+              />
+              <span className="min-w-0 flex-1 truncate">
+                {p.name} <span className="text-gray-400">· {p.email}</span>
+              </span>
+              {p.emailed && (
+                <span
+                  title={
+                    "Déjà contacté" +
+                    (p.emailed_at
+                      ? " le " + new Date(p.emailed_at).toLocaleDateString("fr-BE")
+                      : "") +
+                    (p.emailed_campaigns?.length ? " · " + p.emailed_campaigns.join(", ") : "")
+                  }
+                >
+                  <Badge color="amber">✉ déjà contacté</Badge>
+                </span>
+              )}
+              {others.length > 0 && (
+                <span title={"Aussi dans : " + others.map((s) => s.label).join(", ")}>
+                  <Badge color="amber">+{others.length} segment{others.length > 1 ? "s" : ""}</Badge>
+                </span>
+              )}
+            </label>
+          );
+        })}
+      </div>
+    </Card>
+  );
+}
+
+// Valeurs d'exemple par défaut pour le test.
+const SAMPLE: Record<string, string> = {
+  name: "Le Petit Café",
+  contact_name: "Marie Dupont",
+  city: "Bruxelles",
+  country: "Belgique",
+  category: "Café",
+  address: "Rue de la Loi 1",
+  phone: "+32 2 000 00 00",
+  website: "https://exemple.com",
+  email: "client@exemple.com",
+  logo_url: "",
+};
+const FIELD_LABELS: Record<string, string> = Object.fromEntries(
+  MERGE_FIELDS.map((f) => [f.token.replace(/[{}]/g, "").trim(), f.label])
+);
+
+/** Envoi d'un email de test au niveau campagne, avec données de fusion saisies. */
+function TestSend({
+  campaignId, reqFields, products, setMsg,
+}: {
+  campaignId: string;
+  reqFields: string[];
+  products: { key: string; name: string }[];
+  setMsg: (s: string) => void;
+}) {
+  const [testEmail, setTestEmail] = useState("");
+  const [product, setProduct] = useState(products[0]?.key || "keyring");
+  const [sending, setSending] = useState(false);
+  const [data, setData] = useState<Record<string, string>>(() => {
+    const init: Record<string, string> = {};
+    for (const f of reqFields) init[f] = SAMPLE[f] ?? "";
+    return init;
+  });
+
+  // Garde un champ pour chaque variable requise du template.
+  const fields = reqFields.length ? reqFields : ["name", "contact_name", "city"];
+
+  async function send() {
+    setSending(true);
+    try {
+      const res = await api<{ to: string }>(`/api/campaigns/${campaignId}/test`, {
+        method: "POST",
+        json: { testEmail: testEmail || undefined, data, product },
+      });
+      setMsg(`Email de test envoyé à ${res.to}.`);
+    } catch (e) {
+      setMsg("Erreur test : " + (e as Error).message);
+    } finally {
+      setSending(false);
+    }
+  }
+
+  return (
+    <Card className="p-5">
+      <h3 className="mb-1 font-bold">Envoyer un email de test</h3>
+      <p className="mb-3 text-xs text-gray-400">
+        Vérifiez le rendu avant l'envoi de masse : saisissez une adresse et les données de
+        fusion à simuler. L'email part uniquement vers cette adresse, jamais vers un prospect.
+      </p>
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <label className="text-xs font-medium text-gray-600">
+          Adresse de test
+          <Input
+            type="email"
+            value={testEmail}
+            onChange={(e) => setTestEmail(e.target.value)}
+            placeholder="vous@exemple.com (défaut : TEST_EMAIL)"
+            className="mt-1"
+          />
+        </label>
+        {products.length > 1 && (
+          <label className="text-xs font-medium text-gray-600">
+            Produit à simuler
+            <select
+              value={product}
+              onChange={(e) => setProduct(e.target.value)}
+              className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+            >
+              {products.map((p) => (
+                <option key={p.key} value={p.key}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        {fields.map((f) => (
+          <label key={f} className="text-xs font-medium text-gray-600">
+            {FIELD_LABELS[f] || f} <span className="text-gray-400">({`{{${f}}}`})</span>
+            <Input
+              value={data[f] ?? ""}
+              onChange={(e) => setData((d) => ({ ...d, [f]: e.target.value }))}
+              className="mt-1"
+            />
+          </label>
+        ))}
+      </div>
+      <div className="mt-3">
+        <Button variant="outline" onClick={send} disabled={sending}>
+          {sending ? <Spinner /> : "Envoyer le test"}
+        </Button>
+      </div>
+    </Card>
+  );
+}
+
+function RecipientList({
+  campaignId, recipients, reload, setMsg,
+}: {
+  campaignId: string;
+  recipients: Recipient[]; reload: () => void; setMsg: (s: string) => void;
+}) {
+  const [openId, setOpenId] = useState<string | null>(null);
+
+  async function patch(recipientId: string, fields: any) {
+    await api(`/api/campaigns/${campaignId}/recipients`, {
+      method: "PATCH",
+      json: { recipientId, ...fields },
+    });
+    reload();
+  }
+  async function sendTest(r: Recipient, testEmail: string) {
+    try {
+      const res = await api<{ to: string }>(`/api/campaigns/${campaignId}/send-test`, {
+        method: "POST",
+        json: { recipientId: r.id, testEmail: testEmail || undefined },
+      });
+      setMsg(`Email de test envoyé à ${res.to}.`);
+      reload();
+    } catch (e) {
+      setMsg("Erreur test : " + (e as Error).message);
+    }
+  }
+
+  if (recipients.length === 0)
+    return (
+      <Card className="p-5 text-sm text-gray-400">
+        Aucun destinataire. Ajoutez des prospects ci-dessus.
+      </Card>
+    );
+
+  return (
+    <Card className="overflow-hidden">
+      <table className="w-full text-sm">
+        <thead className="bg-gray-50 text-left text-xs uppercase text-gray-500">
+          <tr>
+            <th className="p-3">Business</th>
+            <th className="p-3">Email</th>
+            <th className="p-3">Statut</th>
+            <th className="p-3">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {recipients.map((r) => (
+            <RecipientRow
+              key={r.id}
+              r={r}
+              open={openId === r.id}
+              onToggle={() => setOpenId(openId === r.id ? null : r.id)}
+              patch={patch}
+              sendTest={sendTest}
+            />
+          ))}
+        </tbody>
+      </table>
+    </Card>
+  );
+}
+
+function statusColor(s: string): any {
+  return (
+    { draft: "gray", test_sent: "amber", approved: "blue", sent: "green", failed: "red" }[
+      s
+    ] || "gray"
+  );
+}
+
+function RecipientRow({
+  r, open, onToggle, patch, sendTest,
+}: {
+  r: Recipient; open: boolean; onToggle: () => void;
+  patch: (id: string, fields: any) => void;
+  sendTest: (r: Recipient, testEmail: string) => void;
+}) {
+  const [testEmail, setTestEmail] = useState("");
+  const [cs, setCs] = useState(r.custom_subject || "");
+  const [ch, setCh] = useState(r.custom_html || "");
+  // Produit affiché = produit du segment d'origine du prospect (comme à l'envoi).
+  const product = getProduct(r.prospect.segment?.product);
+
+  return (
+    <>
+      <tr className="border-t border-gray-100">
+        <td className="p-3 font-medium">
+          {r.prospect.name}
+          <div className="mt-0.5">
+            <Badge color="blue">{product.name}</Badge>
+          </div>
+        </td>
+        <td className="p-3 text-gray-500">{r.to_email || r.prospect.email || "-"}</td>
+        <td className="p-3">
+          <Badge color={statusColor(r.status)}>{r.status}</Badge>
+        </td>
+        <td className="p-3">
+          <div className="flex flex-wrap gap-1">
+            <Button variant="ghost" onClick={onToggle}>
+              {open ? "Fermer" : "Adapter"}
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => sendTest(r, testEmail)}
+              title="Envoie un test à votre adresse"
+            >
+              Test
+            </Button>
+            {r.status !== "approved" ? (
+              <Button onClick={() => patch(r.id, { status: "approved" })}>Approuver</Button>
+            ) : (
+              <Button variant="ghost" onClick={() => patch(r.id, { status: "draft" })}>
+                Désapprouver
+              </Button>
+            )}
+          </div>
+        </td>
+      </tr>
+      {open && (
+        <tr className="bg-gray-50">
+          <td colSpan={4} className="p-4">
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs font-medium text-gray-600">
+                  Email de test (vide = votre adresse configurée)
+                </label>
+                <Input
+                  value={testEmail}
+                  onChange={(e) => setTestEmail(e.target.value)}
+                  placeholder="vous@exemple.com"
+                  className="max-w-xs"
+                />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-gray-600">
+                  Sujet personnalisé (vide = template campagne)
+                </label>
+                <Input value={cs} onChange={(e) => setCs(e.target.value)} />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-gray-600">
+                  Corps personnalisé (vide = email du segment {product.name})
+                </label>
+                <Textarea
+                  value={ch}
+                  onChange={(e) => setCh(e.target.value)}
+                  rows={8}
+                  placeholder="Laisser vide pour utiliser le template de la campagne"
+                />
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  onClick={() =>
+                    patch(r.id, {
+                      custom_subject: cs || null,
+                      custom_html: ch || null,
+                      to_email: r.to_email || r.prospect.email,
+                    })
+                  }
+                >
+                  Enregistrer l'adaptation
+                </Button>
+              </div>
+              {r.error && <p className="text-sm text-red-600">Erreur : {r.error}</p>}
+            </div>
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
