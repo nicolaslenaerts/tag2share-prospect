@@ -34,11 +34,24 @@ export async function POST(req: Request, { params }: Ctx) {
   return ok({ recipients: data }, 201);
 }
 
-// Met à jour un destinataire (contenu adapté, email, statut approuvé...)
+// Met à jour un destinataire (contenu adapté, email, statut approuvé...).
+// `recipientIds` (tableau) = mise à jour groupée, ex. tout approuver en une fois.
 export async function PATCH(req: Request) {
-  const { recipientId, ...fields } = await readJson<any>(req);
-  if (!recipientId) return fail("recipientId requis.");
+  const { recipientId, recipientIds, ...fields } = await readJson<any>(req);
   const db = supabaseAdmin();
+
+  if (Array.isArray(recipientIds)) {
+    if (recipientIds.length === 0) return fail("recipientIds vide.");
+    const { data, error } = await db
+      .from("campaign_recipients")
+      .update(fields)
+      .in("id", recipientIds)
+      .select("*, prospect:prospects(*)");
+    if (error) return fail(error.message, 500);
+    return ok({ recipients: data });
+  }
+
+  if (!recipientId) return fail("recipientId requis.");
   const { data, error } = await db
     .from("campaign_recipients")
     .update(fields)

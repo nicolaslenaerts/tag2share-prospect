@@ -912,6 +912,24 @@ function RecipientList({
     reload();
   }
 
+  // Approuvables : ni déjà approuvés, ni envoyés/échoués, ni en liste de suppression.
+  const approvable = recipients.filter(
+    (r) =>
+      r.status !== "approved" &&
+      r.status !== "sent" &&
+      r.status !== "failed" &&
+      !r.suppressed
+  );
+  async function approveAll() {
+    if (approvable.length === 0) return;
+    await api(`/api/campaigns/${campaignId}/recipients`, {
+      method: "PATCH",
+      json: { recipientIds: approvable.map((r) => r.id), status: "approved" },
+    });
+    setMsg(`${approvable.length} destinataire(s) approuvé(s).`);
+    reload();
+  }
+
   if (recipients.length === 0)
     return (
       <Card className="p-5 text-sm text-gray-400">
@@ -921,6 +939,12 @@ function RecipientList({
 
   return (
     <Card className="overflow-hidden">
+      <div className="flex items-center justify-between border-b border-gray-100 p-3">
+        <h3 className="font-bold">Destinataires ({recipients.length})</h3>
+        <Button onClick={approveAll} disabled={approvable.length === 0}>
+          Tout approuver ({approvable.length})
+        </Button>
+      </div>
       <table className="w-full text-sm">
         <thead className="bg-gray-50 text-left text-xs uppercase text-gray-500">
           <tr>
