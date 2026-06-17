@@ -92,6 +92,10 @@ create table if not exists public.campaigns (
   subject       text not null default '',
   body_html     text not null default '',     -- template avec variables {{name}}, {{contact_name}}, ...
   email_tagline text,                          -- accroche sous le logo (null = défaut, '' = masquée)
+  product       text,                          -- produit cible (override) : null = produit du segment ; sinon card | keyring | stand
+  utm_source    text,                          -- surcharge UTM (null/vide = "email")
+  utm_medium    text,                          -- surcharge UTM (null/vide = "prospection")
+  utm_campaign  text,                          -- surcharge UTM (null/vide = slug du nom)
   status        text not null default 'draft', -- draft | ready | sending | done
   created_at    timestamptz not null default now()
 );
@@ -147,6 +151,41 @@ create table if not exists public.suppressions (
 );
 
 -- ------------------------------------------------------------
+-- Journal des emails envoyés (append-only). Une ligne par email RÉELLEMENT
+-- envoyé à un prospect, avec les infos figées au moment de l'envoi (campagne,
+-- segment, produit mis en avant, sujet, résultat). Base pour savoir si un
+-- prospect a déjà été contacté. FK "on delete set null" : l'historique survit
+-- à la suppression d'un prospect / d'une campagne (l'email reste dans to_email).
+-- ------------------------------------------------------------
+create table if not exists public.email_log (
+  id            uuid primary key default gen_random_uuid(),
+  prospect_id   uuid references public.prospects(id)            on delete set null,
+  campaign_id   uuid references public.campaigns(id)            on delete set null,
+  recipient_id  uuid references public.campaign_recipients(id)  on delete set null,
+  segment_id    uuid references public.segments(id)             on delete set null,
+  to_email      text not null,                 -- email destinataire (normalisé)
+  prospect_name text,
+  campaign_name text,
+  segment_label text,
+  product_key   text,                           -- card | keyring | stand
+  product_name  text,
+  product_price text,
+  subject       text,
+  status        text not null,                  -- sent | failed
+  resend_id     text,
+  error         text,
+  event         text,                           -- delivered | opened | clicked | bounced | complained
+  event_at      timestamptz,
+  meta          jsonb,
+  created_at    timestamptz not null default now()
+);
+
+create index if not exists email_log_prospect_idx on public.email_log(prospect_id);
+create index if not exists email_log_email_idx    on public.email_log(to_email);
+create index if not exists email_log_campaign_idx on public.email_log(campaign_id);
+create index if not exists email_log_resend_idx   on public.email_log(resend_id);
+
+-- ------------------------------------------------------------
 -- RLS : l'app est mono-utilisateur et accède via service_role côté serveur.
 -- On active RLS et on n'ajoute PAS de policy publique : l'anon key ne peut rien lire/écrire,
 -- toutes les écritures passent par les routes API serveur (service_role).
@@ -159,3 +198,4 @@ alter table public.campaigns           enable row level security;
 alter table public.campaign_segments   enable row level security;
 alter table public.campaign_recipients enable row level security;
 alter table public.suppressions        enable row level security;
+alter table public.email_log           enable row level security;

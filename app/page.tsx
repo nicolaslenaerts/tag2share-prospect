@@ -30,8 +30,14 @@ export default function Home() {
           </p>
         </div>
         <Link
-          href="/suppressions"
+          href="/emails"
           className="ml-auto rounded-lg border border-gray-200 px-3 py-2 text-sm font-semibold text-gray-700 hover:border-brand/50"
+        >
+          Emails envoyés
+        </Link>
+        <Link
+          href="/suppressions"
+          className="rounded-lg border border-gray-200 px-3 py-2 text-sm font-semibold text-gray-700 hover:border-brand/50"
         >
           Liste de suppression
         </Link>

@@ -8,6 +8,7 @@ import {
   mergeDataFromProspect,
   DEFAULT_TAGLINE,
   buildRecipientEmail,
+  slugify,
 } from "@/lib/email";
 import { getProduct, normalizeProductKey, PRODUCT_LIST } from "@/lib/products";
 
@@ -15,6 +16,8 @@ type Segment = { id: string; label?: string; product?: string };
 type Campaign = {
   id: string; name: string; subject: string; body_html: string; status: string;
   email_tagline?: string | null;
+  product?: string | null; // produit cible (override) ; null = produit du segment
+  utm_source?: string | null; utm_medium?: string | null; utm_campaign?: string | null;
   segment_id?: string; segments?: Segment[];
 };
 type Prospect = {
@@ -22,7 +25,7 @@ type Prospect = {
   country?: string; category?: string; website?: string; logo_url?: string; status: string;
   segment?: Segment;
   segments?: Segment[];
-  emailed?: boolean; emailed_at?: string | null; emailed_campaigns?: string[];
+  emailed?: boolean; emailed_at?: string | null; emailed_campaigns?: string[]; emailed_products?: string[];
   suppressed?: boolean;
 };
 type Recipient = {
@@ -189,6 +192,10 @@ function CampaignEditor({
   const [subject, setSubject] = useState(campaign.subject);
   const [body, setBody] = useState(campaign.body_html);
   const [tagline, setTagline] = useState(campaign.email_tagline ?? DEFAULT_TAGLINE);
+  const [product, setProduct] = useState(campaign.product ?? "");
+  const [utmSource, setUtmSource] = useState(campaign.utm_source ?? "");
+  const [utmMedium, setUtmMedium] = useState(campaign.utm_medium ?? "");
+  const [utmCampaign, setUtmCampaign] = useState(campaign.utm_campaign ?? "");
   const [saving, setSaving] = useState(false);
   const [instruction, setInstruction] = useState("");
   const [improving, setImproving] = useState(false);
@@ -234,17 +241,45 @@ function CampaignEditor({
   const sample =
     recipients[0]?.prospect ||
     prospects[0] || { name: "Le Petit Café", city: "Bruxelles", contact_name: "Marie Dupont" };
-  const data = mergeDataFromProspect(sample as any);
+  // Aperçu : produit cible de la campagne s'il est défini, sinon produit du segment de l'exemple.
+  const data = mergeDataFromProspect(
+    sample as any,
+    undefined,
+    product || (sample as any).segment?.product
+  );
 
   async function saveTemplate() {
     setSaving(true);
     await api(`/api/campaigns/${campaign.id}`, {
       method: "PATCH",
-      json: { subject, body_html: body, email_tagline: tagline },
+      json: {
+        subject,
+        body_html: body,
+        email_tagline: tagline,
+        product: product || null, // "" → null = produit du segment
+        utm_source: utmSource.trim() || null, // "" → null = défaut "email"
+        utm_medium: utmMedium.trim() || null, // "" → null = défaut "prospection"
+        utm_campaign: utmCampaign.trim() || null, // "" → null = slug du nom
+      },
     });
     setSaving(false);
     setMsg("Template enregistré.");
     reload();
+  }
+
+  async function deleteCampaign() {
+    const sent = recipients.filter((r) => r.status === "sent").length;
+    const note = sent
+      ? `\n\n${sent} prospect(s) ont déjà été contactés : leur historique d'envoi est conservé (journal des emails) même après suppression.`
+      : "";
+    if (
+      !confirm(
+        `Supprimer définitivement la campagne « ${campaign.name} » ?${note}`
+      )
+    )
+      return;
+    await api(`/api/campaigns/${campaign.id}`, { method: "DELETE" });
+    onBack();
   }
 
   function insertToken(token: string) {
@@ -409,7 +444,27 @@ function CampaignEditor({
           <h3 className="mb-1 font-bold">Email de la campagne</h3>
           <p className="mb-3 text-xs text-gray-400">
             L'email envoyé à tous les destinataires (sauf adaptation individuelle). Les
-            variables {"{{product_*}}"} s'adaptent au produit du segment de chaque prospect.
+            variables {"{{product_*}}"} suivent le produit cible ci-dessous.
+          </p>
+          <label className="mb-1 block text-xs font-medium text-gray-600">
+            Produit cible
+          </label>
+          <select
+            value={product}
+            onChange={(e) => setProduct(e.target.value)}
+            className="mb-1 w-full rounded-lg border border-gray-300 px-2 py-2 text-sm"
+          >
+            <option value="">Auto (produit du segment de chaque prospect)</option>
+            {PRODUCT_LIST.map((p) => (
+              <option key={p.key} value={p.key}>
+                {p.name} ({p.price})
+              </option>
+            ))}
+          </select>
+          <p className="mb-3 text-[11px] text-gray-400">
+            Choisissez un produit pour l'imposer à <b>toute la campagne</b>, ou laissez sur
+            « Auto » pour que chaque prospect voie le produit de son segment. Pensez à
+            enregistrer le template.
           </p>
           <label className="mb-1 block text-xs font-medium text-gray-600">Sujet</label>
           <Input value={subject} onChange={(e) => setSubject(e.target.value)} />
@@ -424,6 +479,36 @@ function CampaignEditor({
           <p className="mt-1 text-[11px] text-gray-400">
             Bandeau bleu affiché sous le logo dans l'email. Vide = pas de bandeau.
           </p>
+
+          <div className="mt-3 rounded-lg border border-gray-200 bg-gray-50 p-3">
+            <label className="mb-1 block text-xs font-medium text-gray-600">
+              Paramètres UTM (liens tag2share.com)
+            </label>
+            <div className="grid gap-2 sm:grid-cols-3">
+              <Input
+                value={utmSource}
+                onChange={(e) => setUtmSource(e.target.value)}
+                placeholder="source (défaut : email)"
+              />
+              <Input
+                value={utmMedium}
+                onChange={(e) => setUtmMedium(e.target.value)}
+                placeholder="medium (défaut : prospection)"
+              />
+              <Input
+                value={utmCampaign}
+                onChange={(e) => setUtmCampaign(e.target.value)}
+                placeholder={`campaign (défaut : ${slugify(campaign.name)})`}
+              />
+            </div>
+            <p className="mt-1 text-[11px] text-gray-400">
+              Ajoutés automatiquement à chaque lien tag2share.com de l'email
+              (<code>utm_source</code>, <code>utm_medium</code>, <code>utm_campaign</code> ;
+              <code>utm_content</code> = produit mis en avant). Laisser vide pour les valeurs
+              par défaut.
+            </p>
+          </div>
+
           <label className="mb-1 mt-3 block text-xs font-medium text-gray-600">
             Corps (HTML, variables {"{{...}}"})
           </label>
@@ -549,6 +634,19 @@ function CampaignEditor({
           Envoyer aux {approved.length} approuvés
         </Button>
       </Card>
+
+      <Card className="flex items-center justify-between p-5">
+        <div>
+          <h3 className="font-bold">Supprimer la campagne</h3>
+          <p className="text-sm text-gray-500">
+            Retire la campagne et ses destinataires. L'historique des prospects déjà
+            contactés (journal des emails) est <b>conservé</b>.
+          </p>
+        </div>
+        <Button variant="danger" onClick={deleteCampaign}>
+          Supprimer
+        </Button>
+      </Card>
     </div>
   );
 }
@@ -648,7 +746,8 @@ function AddRecipients({
                     (p.emailed_at
                       ? " le " + new Date(p.emailed_at).toLocaleDateString("fr-BE")
                       : "") +
-                    (p.emailed_campaigns?.length ? " · " + p.emailed_campaigns.join(", ") : "")
+                    (p.emailed_campaigns?.length ? " · " + p.emailed_campaigns.join(", ") : "") +
+                    (p.emailed_products?.length ? " · produit : " + p.emailed_products.join(", ") : "")
                   }
                 >
                   <Badge color="amber">✉ déjà contacté</Badge>
@@ -869,8 +968,8 @@ function RecipientRow({
   const [testEmail, setTestEmail] = useState("");
   const [cs, setCs] = useState(r.custom_subject || "");
   const [ch, setCh] = useState(r.custom_html || "");
-  // Produit affiché = produit du segment d'origine du prospect (comme à l'envoi).
-  const product = getProduct(r.prospect.segment?.product);
+  // Produit affiché = produit cible de la campagne s'il est défini, sinon segment d'origine (comme à l'envoi).
+  const product = getProduct(campaign.product || r.prospect.segment?.product);
   // Email déjà traité (envoyé ou échoué) : plus d'édition/test, seulement un aperçu.
   const locked = r.status === "sent" || r.status === "failed";
 

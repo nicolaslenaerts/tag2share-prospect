@@ -2,12 +2,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "@/lib/api";
 import { Button, Card, Input, Badge, Spinner } from "@/components/ui";
+import type { Enrichment } from "@/lib/enrich";
 
 type SegmentRef = { id: string; label: string; product?: string };
 type Prospect = {
   id: string;
   name: string;
   category?: string;
+  address?: string;
   city?: string;
   country?: string;
   website?: string;
@@ -17,14 +19,214 @@ type Prospect = {
   logo_url?: string;
   rating?: number;
   reviews_count?: number;
+  enrichment?: Enrichment | null;
+  created_at?: string;
   status: string;
   segments?: SegmentRef[];
   emailed?: boolean;
   emailed_at?: string | null;
   emailed_campaigns?: string[];
+  emailed_products?: string[];
   suppressed?: boolean;
   suppression_reason?: string | null;
 };
+
+const SOCIAL_LABELS: Record<string, string> = {
+  facebook: "Facebook",
+  instagram: "Instagram",
+  linkedin: "LinkedIn",
+  twitter: "X / Twitter",
+  tiktok: "TikTok",
+  youtube: "YouTube",
+};
+
+// Ligne label / valeur du panneau de détail.
+function DetailRow({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="grid grid-cols-[8rem_1fr] gap-3 py-1.5 text-sm">
+      <div className="text-xs font-medium uppercase text-gray-400">{label}</div>
+      <div className="break-words text-gray-800">{children}</div>
+    </div>
+  );
+}
+
+// Panneau latéral : toutes les informations disponibles d'un prospect.
+function ProspectDetail({
+  p,
+  onClose,
+}: {
+  p: Prospect;
+  onClose: () => void;
+}) {
+  const e = p.enrichment || undefined;
+  const socials = e?.socials || {};
+  const hasSocials = Object.keys(socials).length > 0;
+  return (
+    <div
+      className="fixed inset-0 z-50 flex justify-end bg-black/30"
+      onClick={onClose}
+    >
+      <div
+        className="h-full w-full max-w-lg overflow-y-auto bg-white shadow-xl"
+        onClick={(ev) => ev.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-3 border-b border-gray-100 p-5">
+          <div className="flex items-center gap-3">
+            {p.logo_url && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={p.logo_url}
+                alt=""
+                className="h-12 w-12 rounded object-contain"
+              />
+            )}
+            <div>
+              <div className="text-lg font-bold">{p.name}</div>
+              <div className="text-xs text-gray-400">
+                {[p.category, p.city, p.country].filter(Boolean).join(" · ")}
+              </div>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700"
+            title="Fermer"
+          >
+            ✕
+          </button>
+        </div>
+
+        <div className="divide-y divide-gray-100 p-5">
+          {/* Coordonnées */}
+          <section className="pb-3">
+            <h4 className="mb-1 text-sm font-semibold text-gray-700">Coordonnées</h4>
+            <DetailRow label="Site web">
+              {p.website ? (
+                <a href={p.website} target="_blank" className="text-brand underline">
+                  {p.website}
+                </a>
+              ) : (
+                "-"
+              )}
+            </DetailRow>
+            <DetailRow label="Téléphone">{p.phone || "-"}</DetailRow>
+            <DetailRow label="Email">{p.email || "-"}</DetailRow>
+            {e?.emails && e.emails.length > 1 && (
+              <DetailRow label="Autres emails">
+                {e.emails.slice(1).join(", ")}
+              </DetailRow>
+            )}
+            <DetailRow label="Contact">
+              {p.contact_name || "-"}
+              {e?.contact_role ? ` (${e.contact_role})` : ""}
+            </DetailRow>
+            <DetailRow label="Adresse">{p.address || "-"}</DetailRow>
+          </section>
+
+          {/* Données légales / registre */}
+          {(e?.company_number || e?.vat_number || e?.registry || e?.directors) && (
+            <section className="py-3">
+              <h4 className="mb-1 text-sm font-semibold text-gray-700">
+                Données légales
+              </h4>
+              <DetailRow label="N° entreprise">{e?.company_number || "-"}</DetailRow>
+              <DetailRow label="N° TVA">{e?.vat_number || "-"}</DetailRow>
+              {e?.registry?.activity && (
+                <DetailRow label="Activité">{e.registry.activity}</DetailRow>
+              )}
+              {e?.directors && e.directors.length > 0 && (
+                <DetailRow label="Dirigeants">{e.directors.join(", ")}</DetailRow>
+              )}
+              {e?.registry?.source && (
+                <DetailRow label="Source">
+                  {e.registry.source === "vies"
+                    ? "VIES (TVA UE)"
+                    : "Annuaire des entreprises (FR)"}
+                  {e.registry.name ? ` — ${e.registry.name}` : ""}
+                </DetailRow>
+              )}
+            </section>
+          )}
+
+          {/* Réseaux sociaux */}
+          {hasSocials && (
+            <section className="py-3">
+              <h4 className="mb-1 text-sm font-semibold text-gray-700">
+                Réseaux sociaux
+              </h4>
+              <div className="flex flex-wrap gap-2">
+                {Object.entries(socials).map(([k, url]) => (
+                  <a
+                    key={k}
+                    href={url}
+                    target="_blank"
+                    className="rounded-full bg-gray-100 px-3 py-1 text-xs text-gray-700 hover:bg-gray-200"
+                  >
+                    {SOCIAL_LABELS[k] || k}
+                  </a>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {/* Description */}
+          {e?.description && (
+            <section className="py-3">
+              <h4 className="mb-1 text-sm font-semibold text-gray-700">Description</h4>
+              <p className="text-sm text-gray-700">{e.description}</p>
+            </section>
+          )}
+
+          {/* Avis Google */}
+          {p.rating != null && (
+            <section className="py-3">
+              <h4 className="mb-1 text-sm font-semibold text-gray-700">Avis Google</h4>
+              <DetailRow label="Note">
+                ★ {p.rating} ({p.reviews_count ?? 0} avis)
+              </DetailRow>
+            </section>
+          )}
+
+          {/* Segments */}
+          {(p.segments?.length ?? 0) > 0 && (
+            <section className="py-3">
+              <h4 className="mb-1 text-sm font-semibold text-gray-700">Segments</h4>
+              <div className="flex flex-wrap gap-1">
+                {p.segments!.map((s) => (
+                  <Badge key={s.id} color="blue">
+                    {s.label}
+                  </Badge>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {/* Diagnostic */}
+          {e?.pages_fetched && e.pages_fetched.length > 0 && (
+            <section className="py-3">
+              <h4 className="mb-1 text-sm font-semibold text-gray-700">
+                Pages analysées
+              </h4>
+              <ul className="space-y-0.5 text-xs text-gray-500">
+                {e.pages_fetched.map((u) => (
+                  <li key={u} className="truncate">
+                    {u}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // Libellé du badge de suppression selon la raison.
 const SUPPRESSION_LABEL: Record<string, string> = {
@@ -121,6 +323,8 @@ export function Prospects({ onNext }: { onNext: () => void }) {
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [fEnriched, setFEnriched] = useState<"all" | "yes" | "no">("all");
   const [fEmail, setFEmail] = useState<"all" | "yes" | "no">("all");
+  const [detailId, setDetailId] = useState<string | null>(null);
+  const detail = detailId ? list.find((p) => p.id === detailId) ?? null : null;
 
   const filtered = useMemo(() => {
     return list.filter((p) => {
@@ -433,6 +637,9 @@ export function Prospects({ onNext }: { onNext: () => void }) {
                                 : "") +
                               (p.emailed_campaigns?.length
                                 ? " · " + p.emailed_campaigns.join(", ")
+                                : "") +
+                              (p.emailed_products?.length
+                                ? " · produit : " + p.emailed_products.join(", ")
                                 : "")
                             }
                           >
@@ -448,6 +655,13 @@ export function Prospects({ onNext }: { onNext: () => void }) {
                     </td>
                     <td className="p-3">
                       <div className="flex items-center gap-1 whitespace-nowrap">
+                        <Button
+                          variant="ghost"
+                          title="Voir le détail"
+                          onClick={() => setDetailId(p.id)}
+                        >
+                          Détail
+                        </Button>
                         {p.email && !p.suppressed && (
                           <Button
                             variant="ghost"
@@ -474,6 +688,10 @@ export function Prospects({ onNext }: { onNext: () => void }) {
           </div>
         )}
       </Card>
+
+      {detail && (
+        <ProspectDetail p={detail} onClose={() => setDetailId(null)} />
+      )}
     </div>
   );
 }

@@ -1,6 +1,7 @@
 import { supabaseAdmin } from "@/lib/supabase";
 import { ok, fail, readJson } from "@/lib/http";
 import { suppressionMap, normEmail } from "@/lib/suppression";
+import { contactHistory } from "@/lib/email-log";
 
 export const runtime = "nodejs";
 
@@ -46,35 +47,27 @@ export async function GET(req: Request) {
     segByProspect.set(m.prospect_id, arr);
   }
 
-  // Envois déjà effectués (status sent), toutes campagnes confondues.
-  const { data: sent } = await db
-    .from("campaign_recipients")
-    .select("prospect_id, sent_at, campaign:campaigns(name)")
-    .eq("status", "sent")
-    .in("prospect_id", ids);
-  const sentByProspect = new Map<string, { sent_at?: string; campaigns: string[] }>();
-  for (const s of sent ?? []) {
-    const cur = sentByProspect.get(s.prospect_id) ?? { campaigns: [] };
-    if (s.sent_at && (!cur.sent_at || s.sent_at < cur.sent_at)) cur.sent_at = s.sent_at;
-    const cname = (s.campaign as any)?.name;
-    if (cname && !cur.campaigns.includes(cname)) cur.campaigns.push(cname);
-    sentByProspect.set(s.prospect_id, cur);
-  }
-
   // Désinscriptions / bounces / plaintes (liste de suppression).
   const suppressed = await suppressionMap(
     (prospects ?? []).map((p) => p.email).filter(Boolean)
   );
 
+  // "Déjà contacté" : lu depuis le journal des emails envoyés (source de vérité,
+  // matché par prospect_id OU email, toutes campagnes confondues).
+  const history = await contactHistory(
+    (prospects ?? []).map((p) => ({ id: p.id, email: p.email }))
+  );
+
   const enriched = (prospects ?? []).map((p) => {
-    const sentInfo = sentByProspect.get(p.id);
+    const contact = history.get(p.id);
     const reason = p.email ? suppressed.get(normEmail(p.email)) ?? null : null;
     return {
       ...p,
       segments: segByProspect.get(p.id) ?? [],
-      emailed: !!sentInfo,
-      emailed_at: sentInfo?.sent_at ?? null,
-      emailed_campaigns: sentInfo?.campaigns ?? [],
+      emailed: contact?.emailed ?? false,
+      emailed_at: contact?.emailedAt ?? null,
+      emailed_campaigns: contact?.campaigns ?? [],
+      emailed_products: contact?.products ?? [],
       suppressed: !!reason,
       suppression_reason: reason,
     };

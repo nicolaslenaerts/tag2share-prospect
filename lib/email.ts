@@ -23,6 +23,70 @@ export function enhanceLinks(html: string): string {
   });
 }
 
+/** Transforme un texte en slug utilisable dans une URL (utm_campaign). */
+export function slugify(text: string): string {
+  return text
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "") // accents
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "")
+    .slice(0, 80);
+}
+
+export type UtmParams = {
+  source?: string;
+  medium?: string;
+  campaign?: string;
+  content?: string;
+};
+
+/** Valeurs UTM par défaut (si la campagne ne surcharge pas). */
+export const DEFAULT_UTM_SOURCE = "email";
+export const DEFAULT_UTM_MEDIUM = "prospection";
+
+/** Vrai si l'URL pointe vers un domaine tag2share.com (ou sous-domaine). */
+function isTag2ShareUrl(u: URL): boolean {
+  return /(^|\.)tag2share\.com$/i.test(u.hostname);
+}
+
+/**
+ * Ajoute les paramètres UTM à une URL http(s) absolue pointant vers tag2share.com.
+ * Les liens externes, non-http (mailto:, tel:, #ancres) et les params utm_*
+ * déjà présents sont laissés intacts.
+ */
+export function withUtm(url: string, utm: UtmParams): string {
+  if (!/^https?:\/\//i.test(url)) return url;
+  try {
+    const u = new URL(url);
+    if (!isTag2ShareUrl(u)) return url; // on ne tague que nos propres liens
+    const map: Record<string, string | undefined> = {
+      utm_source: utm.source,
+      utm_medium: utm.medium,
+      utm_campaign: utm.campaign,
+      utm_content: utm.content,
+    };
+    for (const [k, v] of Object.entries(map)) {
+      if (v && !u.searchParams.has(k)) u.searchParams.set(k, v);
+    }
+    return u.toString();
+  } catch {
+    return url;
+  }
+}
+
+/**
+ * Ajoute les paramètres UTM à tous les liens tag2share.com (<a href>) d'un
+ * fragment HTML. Les liens externes / mailto / tel / ancres sont ignorés.
+ */
+export function addUtmToLinks(html: string, utm: UtmParams): string {
+  return html.replace(
+    /(<a\b[^>]*\bhref=)(["'])(.*?)\2/gi,
+    (_m, prefix: string, quote: string, href: string) =>
+      `${prefix}${quote}${withUtm(href, utm)}${quote}`
+  );
+}
+
 /**
  * Mini-bloc "autres produits" (les 2 produits non mis en avant), avec liens visibles.
  */
@@ -126,11 +190,22 @@ export function mergeDataFromProspect(
  * Rend l'email final d'un destinataire. Priorité du template :
  *   1. override du destinataire (custom_subject / custom_html)
  *   2. template de la campagne (l'email est rédigé au niveau de la campagne)
- * Les variables produit ({{product_*}}) sont résolues depuis le produit mis en
- * avant du segment d'ORIGINE du prospect (chaque destinataire voit son produit).
+ * Produit mis en avant ({{product_*}}) : le produit cible de la campagne
+ * (campaign.product) prime s'il est défini ; sinon on retombe sur le produit
+ * du segment d'ORIGINE du prospect (chaque destinataire voit son produit).
  */
 export function buildRecipientEmail(args: {
-  campaign: { subject: string; body_html: string; email_tagline?: string | null };
+  campaign: {
+    subject: string;
+    body_html: string;
+    email_tagline?: string | null;
+    product?: string | null;
+    name?: string | null;
+    // Surcharges UTM (null/vide → valeurs par défaut).
+    utm_source?: string | null;
+    utm_medium?: string | null;
+    utm_campaign?: string | null;
+  };
   recipient: { custom_subject?: string | null; custom_html?: string | null };
   prospect: Record<string, any>;
   segment?: {
@@ -140,16 +215,30 @@ export function buildRecipientEmail(args: {
   unsubscribeUrl?: string | null;
 }): { subject: string; html: string } {
   const seg = args.segment;
-  const data = mergeDataFromProspect(args.prospect, args.overrideData, seg?.product);
+  // Override campagne prioritaire, sinon produit du segment.
+  const productKey = args.campaign.product || seg?.product;
+  const data = mergeDataFromProspect(args.prospect, args.overrideData, productKey);
   const subjectTpl = args.recipient.custom_subject || args.campaign.subject;
   const bodyTpl = args.recipient.custom_html || args.campaign.body_html;
   const subject = noEmDash(renderMerge(subjectTpl, data));
+  // Tag UTM : chaque lien tag2share du corps reçoit source/medium/campaign
+  // (+ produit en avant). Les valeurs de la campagne priment sur les défauts.
+  const utm: UtmParams = {
+    source: args.campaign.utm_source?.trim() || DEFAULT_UTM_SOURCE,
+    medium: args.campaign.utm_medium?.trim() || DEFAULT_UTM_MEDIUM,
+    campaign:
+      args.campaign.utm_campaign?.trim() ||
+      (args.campaign.name ? slugify(args.campaign.name) : "prospection"),
+    content: productKey || undefined,
+  };
   // Le header affiche TOUJOURS le logo Tag2Share (pas celui du prospect).
   // enhanceLinks garantit des liens visibles même si le template n'en stylise pas.
+  // addUtmToLinks ajoute le tracking UTM à tous les liens du corps (le lien de
+  // désinscription, ajouté ensuite par wrapEmail, n'est pas concerné).
   // noEmDash : aucun email ne doit contenir le caractère "—".
   // L'accroche sous le logo est éditable par campagne (email_tagline).
   const html = noEmDash(
-    wrapEmail(enhanceLinks(renderMerge(bodyTpl, data)), {
+    wrapEmail(addUtmToLinks(enhanceLinks(renderMerge(bodyTpl, data)), utm), {
       tagline: args.campaign.email_tagline,
       unsubscribeUrl: args.unsubscribeUrl ?? null,
     })

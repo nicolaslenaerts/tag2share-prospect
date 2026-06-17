@@ -5,6 +5,7 @@ import { sendEmail } from "@/lib/resend";
 import { suppressedSet, normEmail } from "@/lib/suppression";
 import { validateSendable } from "@/lib/email-validation";
 import { unsubscribeUrl } from "@/lib/unsubscribe";
+import { logEmailSend } from "@/lib/email-log";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -129,15 +130,28 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
         },
       });
+      const resendId = (data as any)?.id ?? null;
       await db
         .from("campaign_recipients")
         .update({
           status: "sent",
           sent_at: new Date().toISOString(),
-          resend_id: (data as any)?.id ?? null,
+          resend_id: resendId,
           error: null,
         })
         .eq("id", r.id);
+      // Journal immuable : email envoyé, produit mis en avant + infos figés.
+      await logEmailSend({
+        prospect: r.prospect,
+        campaign,
+        recipient: r,
+        segment: r.prospect?.segment,
+        toEmail: to,
+        subject,
+        status: "sent",
+        resendId,
+        replyTo,
+      });
       results.push({ id: r.id, to, sent: true });
       remaining -= 1;
       if (delayMs > 0) await sleep(delayMs);
@@ -146,6 +160,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         .from("campaign_recipients")
         .update({ status: "failed", error: (e as Error).message })
         .eq("id", r.id);
+      await logEmailSend({
+        prospect: r.prospect,
+        campaign,
+        recipient: r,
+        segment: r.prospect?.segment,
+        toEmail: to,
+        subject,
+        status: "failed",
+        error: (e as Error).message,
+        replyTo,
+      });
       results.push({ id: r.id, to, error: (e as Error).message });
     }
   }

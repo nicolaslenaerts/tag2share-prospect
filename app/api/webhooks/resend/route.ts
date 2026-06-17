@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import { supabaseAdmin } from "@/lib/supabase";
 import { addSuppression, type SuppressionReason } from "@/lib/suppression";
+import { recordEmailEvent } from "@/lib/email-log";
 
 export const runtime = "nodejs";
 
@@ -51,6 +52,11 @@ export async function POST(req: Request) {
   const data = event?.data || {};
   const tos: string[] = Array.isArray(data.to) ? data.to : data.to ? [data.to] : [];
   const emailId: string | undefined = data.email_id;
+
+  // Suivi de délivrabilité : on enregistre l'événement sur la ligne du journal.
+  // "email.delivered" -> delivered, "email.opened" -> opened, etc.
+  const logEvent = type.startsWith("email.") ? type.slice("email.".length) : "";
+  if (emailId && logEvent) await recordEmailEvent(emailId, logEvent);
 
   let reason: SuppressionReason | null = null;
   let status: string | null = null;

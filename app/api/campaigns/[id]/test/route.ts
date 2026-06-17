@@ -31,10 +31,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (!campaign) return fail("Campagne introuvable.", 404);
 
   const { subject, html } = buildRecipientEmail({
-    campaign,
+    // Le produit choisi pour le test prime ; sinon on garde le produit cible de la campagne.
+    campaign: { ...campaign, product: product || campaign.product },
     recipient: {},
     prospect: data || {},
-    segment: product ? { product } : null,
+    segment: null,
     unsubscribeUrl: unsubscribeUrl(to),
   });
 
