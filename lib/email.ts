@@ -14,6 +14,32 @@ export function noEmDash(text: string): string {
 }
 
 /**
+ * Variables produit : résolues depuis le segment (pas depuis le prospect) →
+ * elles ne comptent pas comme des champs prospect requis.
+ */
+export const PRODUCT_TOKENS = new Set([
+  "product_name", "product_price", "product_url", "config_url", "products_more",
+]);
+
+/**
+ * Champs prospect réellement requis par un template = ses variables {{...}},
+ * hors variables produit. Utilisé pour décider qu'un prospect est « complet »
+ * (côté UI comme côté synchro serveur — garder les deux alignés).
+ */
+export function requiredProspectFields(...templates: string[]): string[] {
+  const found = new Set<string>();
+  const re = /\{\{\s*([a-z_]+)\s*\}\}/gi;
+  for (const t of templates) {
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(t || ""))) {
+      const key = m[1].toLowerCase();
+      if (!PRODUCT_TOKENS.has(key)) found.add(key);
+    }
+  }
+  return [...found];
+}
+
+/**
  * Rend visibles les liens du corps : tout <a> SANS attribut style reçoit une
  * couleur de marque + soulignement + gras (les boutons, qui ont déjà un style, sont laissés tels quels).
  */

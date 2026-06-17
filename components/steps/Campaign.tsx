@@ -9,6 +9,7 @@ import {
   DEFAULT_TAGLINE,
   buildRecipientEmail,
   slugify,
+  requiredProspectFields,
 } from "@/lib/email";
 import { getProduct, normalizeProductKey, PRODUCT_LIST } from "@/lib/products";
 
@@ -58,11 +59,26 @@ export function Campaign() {
     setCampaigns(r.campaigns);
   }
   async function openCampaign(c: Campaign) {
+    // Ajout auto des nouveaux prospects éligibles des segments ciblés (idempotent).
+    let added = 0;
+    try {
+      const sync = await api<{ added: number }>(`/api/campaigns/${c.id}/sync`, {
+        method: "POST",
+      });
+      added = sync.added ?? 0;
+    } catch {
+      /* la synchro est best-effort : on ouvre la campagne même si elle échoue */
+    }
     const r = await api<{ campaign: Campaign; recipients: Recipient[] }>(
       `/api/campaigns/${c.id}`
     );
     setCurrent(r.campaign);
     setRecipients(r.recipients);
+    if (added > 0)
+      setMsg(
+        `${added} nouveau${added > 1 ? "x" : ""} prospect${added > 1 ? "s" : ""} ` +
+          `du/des segment(s) ajouté${added > 1 ? "s" : ""} automatiquement (en brouillon).`
+      );
   }
   useEffect(() => {
     loadCampaigns();
@@ -294,7 +310,7 @@ function CampaignEditor({
   // et disposant de TOUTES les infos utilisées par l'email (variables {{...}}
   // du template, hors variables produit qui viennent du segment).
   const segIds = (campaign.segments ?? []).map((s) => s.id);
-  const reqFields = requiredFields(subject, body);
+  const reqFields = requiredProspectFields(subject, body);
   const inTargetSegments = (p: Prospect) =>
     segIds.length === 0 || (p.segments ?? []).some((s) => segIds.includes(s.id));
   const hasAllFields = (p: Prospect) =>
@@ -389,7 +405,9 @@ function CampaignEditor({
             <Badge key={s.id} color="blue">{s.label}</Badge>
           ))}
         </div>
-        <Badge color="blue">{recipients.length} destinataires</Badge>
+        <Badge color="blue">
+          {recipients.filter((r) => r.status !== "excluded").length} destinataires
+        </Badge>
       </div>
 
       {msg && (
@@ -651,25 +669,6 @@ function CampaignEditor({
   );
 }
 
-// Variables produit : résolues depuis le segment, pas depuis le prospect → non requises.
-const PRODUCT_TOKENS = new Set([
-  "product_name", "product_price", "product_url", "config_url", "products_more",
-]);
-
-/** Champs prospect réellement requis = variables {{...}} du template, hors variables produit. */
-function requiredFields(...templates: string[]): string[] {
-  const found = new Set<string>();
-  const re = /\{\{\s*([a-z_]+)\s*\}\}/gi;
-  for (const t of templates) {
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(t || ""))) {
-      const key = m[1].toLowerCase();
-      if (!PRODUCT_TOKENS.has(key)) found.add(key);
-    }
-  }
-  return [...found];
-}
-
 function AddRecipients({
   eligible, segmentIds, incompleteCount, requiredFields: reqFields, onAdd,
 }: {
@@ -904,16 +903,20 @@ function RecipientList({
   async function remove(r: Recipient) {
     const who = r.prospect.name || r.to_email || r.prospect.email || "ce contact";
     if (!confirm(`Retirer ${who} de cette campagne ?`)) return;
+    // Exclusion douce (pas une suppression) : la synchro auto ne le ré-ajoutera pas.
     await api(`/api/campaigns/${campaignId}/recipients`, {
-      method: "DELETE",
-      json: { recipientId: r.id },
+      method: "PATCH",
+      json: { recipientId: r.id, status: "excluded" },
     });
     setMsg("Contact retiré de la campagne.");
     reload();
   }
 
-  // Approuvables : ni déjà approuvés, ni envoyés/échoués, ni en liste de suppression.
-  const approvable = recipients.filter(
+  // Destinataires visibles : on masque les exclus (« retirés » via exclusion douce).
+  const visible = recipients.filter((r) => r.status !== "excluded");
+
+  // Approuvables : ni déjà approuvés, ni envoyés/échoués, ni exclus, ni supprimés.
+  const approvable = visible.filter(
     (r) =>
       r.status !== "approved" &&
       r.status !== "sent" &&
@@ -930,7 +933,7 @@ function RecipientList({
     reload();
   }
 
-  if (recipients.length === 0)
+  if (visible.length === 0)
     return (
       <Card className="p-5 text-sm text-gray-400">
         Aucun destinataire. Ajoutez des prospects ci-dessus.
@@ -940,7 +943,7 @@ function RecipientList({
   return (
     <Card className="overflow-hidden">
       <div className="flex items-center justify-between border-b border-gray-100 p-3">
-        <h3 className="font-bold">Destinataires ({recipients.length})</h3>
+        <h3 className="font-bold">Destinataires ({visible.length})</h3>
         <Button onClick={approveAll} disabled={approvable.length === 0}>
           Tout approuver ({approvable.length})
         </Button>
@@ -955,7 +958,7 @@ function RecipientList({
           </tr>
         </thead>
         <tbody>
-          {recipients.map((r) => (
+          {visible.map((r) => (
             <RecipientRow
               key={r.id}
               r={r}

@@ -126,7 +126,7 @@ create table if not exists public.campaign_recipients (
   to_email        text,                         -- email résolu (peut être édité)
   custom_subject  text,                         -- override du sujet pour ce prospect (sinon template)
   custom_html     text,                         -- override du corps pour ce prospect (sinon template rendu)
-  status          text not null default 'draft',-- draft | approved | test_sent | sent | failed | skipped
+  status          text not null default 'draft',-- draft | approved | test_sent | sent | failed | skipped | excluded (retiré manuellement, jamais ré-ajouté par la synchro)
   resend_id       text,
   error           text,
   test_sent_at    timestamptz,

@@ -126,10 +126,15 @@ export async function POST(req: Request) {
     new_count: newForSegment.length,
   });
 
+  // On ne renvoie comme "à enrichir" que les prospects nouveaux pour ce segment :
+  // inutile de relancer l'enrichissement sur des contacts déjà captés.
+  const newSet = new Set(newForSegment);
+
   return ok({
     count: ids.length,
     newCount: newForSegment.length,
     zone,
     prospects: data,
+    newProspects: (data ?? []).filter((p) => newSet.has(p.id)),
   });
 }

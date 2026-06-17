@@ -46,7 +46,8 @@ export function Search({ onNext }: { onNext: () => void }) {
     setPhase("Recherche Google Places…");
     try {
       const r = await api<{
-        count: number; newCount: number; zone: string; prospects: { id: string }[];
+        count: number; newCount: number; zone: string;
+        prospects: { id: string }[]; newProspects: { id: string }[];
       }>("/api/prospects/search", {
         method: "POST",
         json: { segmentId: seg.id, country, city: city || undefined, maxResults },
@@ -58,11 +59,13 @@ export function Search({ onNext }: { onNext: () => void }) {
       loadHistory();
       loadSegments();
 
-      if (autoEnrich && r.prospects?.length) {
-        setPhase(`Enrichissement de ${r.prospects.length} sites (email, contact, logo)…`);
+      // On n'enrichit que les nouveaux prospects : si 0 nouveau, on ne relance
+      // pas l'enrichissement sur des contacts déjà existants.
+      if (autoEnrich && r.newProspects?.length) {
+        setPhase(`Enrichissement de ${r.newProspects.length} sites (email, contact, logo)…`);
         await api("/api/prospects/enrich", {
           method: "POST",
-          json: { ids: r.prospects.map((p) => p.id) },
+          json: { ids: r.newProspects.map((p) => p.id) },
         });
       }
     } catch (e) {

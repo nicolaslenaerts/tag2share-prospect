@@ -323,8 +323,23 @@ export function Prospects({ onNext }: { onNext: () => void }) {
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [fEnriched, setFEnriched] = useState<"all" | "yes" | "no">("all");
   const [fEmail, setFEmail] = useState<"all" | "yes" | "no">("all");
+  const [fCampaign, setFCampaign] = useState<string>("all");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
   const [detailId, setDetailId] = useState<string | null>(null);
   const detail = detailId ? list.find((p) => p.id === detailId) ?? null : null;
+
+  // Liste des campagnes apparaissant dans l'historique de contact des prospects.
+  const campaignOptions = useMemo(() => {
+    const names = new Set<string>();
+    for (const p of list) for (const c of p.emailed_campaigns ?? []) names.add(c);
+    return [...names].sort((a, b) => a.localeCompare(b, "fr", { sensitivity: "base" }));
+  }, [list]);
+
+  // Réinitialise le filtre si la campagne sélectionnée disparaît de la liste.
+  useEffect(() => {
+    if (fCampaign !== "all" && !campaignOptions.includes(fCampaign)) setFCampaign("all");
+  }, [campaignOptions, fCampaign]);
 
   const filtered = useMemo(() => {
     return list.filter((p) => {
@@ -333,9 +348,11 @@ export function Prospects({ onNext }: { onNext: () => void }) {
       const hasEmail = !!(p.email && p.email.trim());
       if (fEmail === "yes" && !hasEmail) return false;
       if (fEmail === "no" && hasEmail) return false;
+      if (fCampaign !== "all" && !(p.emailed_campaigns ?? []).includes(fCampaign))
+        return false;
       return true;
     });
-  }, [list, fEnriched, fEmail]);
+  }, [list, fEnriched, fEmail, fCampaign]);
 
   const sorted = useMemo(() => {
     if (!sortKey) return filtered;
@@ -351,6 +368,19 @@ export function Prospects({ onNext }: { onNext: () => void }) {
       return sa.localeCompare(sb, "fr", { sensitivity: "base" }) * dir;
     });
   }, [filtered, sortKey, sortDir]);
+
+  // Pagination (côté client : tout est déjà chargé, on limite seulement l'affichage).
+  const pageCount = Math.max(1, Math.ceil(sorted.length / pageSize));
+  const currentPage = Math.min(page, pageCount);
+  const paged = useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    return sorted.slice(start, start + pageSize);
+  }, [sorted, currentPage, pageSize]);
+
+  // Retour à la première page dès qu'un filtre, un tri ou la taille de page change.
+  useEffect(() => {
+    setPage(1);
+  }, [fEnriched, fEmail, fCampaign, sortKey, sortDir, pageSize]);
 
   function toggleSort(key: SortKey) {
     if (sortKey === key) {
@@ -503,6 +533,21 @@ export function Prospects({ onNext }: { onNext: () => void }) {
               { key: "no", label: "Sans email" },
             ]}
           />
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-medium text-gray-600">Campagne :</span>
+            <select
+              value={fCampaign}
+              onChange={(e) => setFCampaign(e.target.value)}
+              className="rounded-md border border-gray-200 bg-white px-2 py-1 text-xs font-medium text-gray-700 focus:border-brand focus:outline-none"
+            >
+              <option value="all">Toutes</option>
+              {campaignOptions.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
       </Card>
 
@@ -541,7 +586,7 @@ export function Prospects({ onNext }: { onNext: () => void }) {
                 </tr>
               </thead>
               <tbody>
-                {sorted.map((p) => (
+                {paged.map((p) => (
                   <tr key={p.id} className="border-t border-gray-100 align-top">
                     <td className="p-3">
                       <input
@@ -685,6 +730,47 @@ export function Prospects({ onNext }: { onNext: () => void }) {
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+        {!loading && sorted.length > 0 && (
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 px-4 py-3 text-sm text-gray-600">
+            <div className="flex items-center gap-2">
+              <span className="text-xs">Par page :</span>
+              <select
+                value={pageSize}
+                onChange={(e) => setPageSize(Number(e.target.value))}
+                className="rounded-md border border-gray-200 bg-white px-2 py-1 text-xs font-medium text-gray-700 focus:border-brand focus:outline-none"
+              >
+                {[25, 50, 100, 200].map((n) => (
+                  <option key={n} value={n}>
+                    {n}
+                  </option>
+                ))}
+              </select>
+              <span className="text-xs text-gray-400">
+                {(currentPage - 1) * pageSize + 1}–
+                {Math.min(currentPage * pageSize, sorted.length)} sur {sorted.length}
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                disabled={currentPage <= 1}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+              >
+                ← Précédent
+              </Button>
+              <span className="text-xs">
+                Page {currentPage} / {pageCount}
+              </span>
+              <Button
+                variant="outline"
+                disabled={currentPage >= pageCount}
+                onClick={() => setPage((p) => Math.min(pageCount, p + 1))}
+              >
+                Suivant →
+              </Button>
+            </div>
           </div>
         )}
       </Card>
