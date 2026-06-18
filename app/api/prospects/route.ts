@@ -35,16 +35,23 @@ export async function GET(req: Request) {
   if (ids.length === 0) return ok({ prospects: [] });
 
   // Appartenances (tous segments) pour chaque prospect.
-  const { data: memberships } = await db
-    .from("segment_prospects")
-    .select("prospect_id, segment:segments(id, label, product)")
-    .in("prospect_id", ids);
+  // On découpe en lots : un .in() avec des centaines d'ids produit une URL
+  // trop longue (Bad Request) et ferait silencieusement perdre les segments.
   const segByProspect = new Map<string, any[]>();
-  for (const m of memberships ?? []) {
-    if (!m.segment) continue;
-    const arr = segByProspect.get(m.prospect_id) ?? [];
-    arr.push(m.segment);
-    segByProspect.set(m.prospect_id, arr);
+  const CHUNK = 150;
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const slice = ids.slice(i, i + CHUNK);
+    const { data: memberships, error: mErr } = await db
+      .from("segment_prospects")
+      .select("prospect_id, segment:segments(id, label, product)")
+      .in("prospect_id", slice);
+    if (mErr) return fail(mErr.message, 500);
+    for (const m of memberships ?? []) {
+      if (!m.segment) continue;
+      const arr = segByProspect.get(m.prospect_id) ?? [];
+      arr.push(m.segment);
+      segByProspect.set(m.prospect_id, arr);
+    }
   }
 
   // Désinscriptions / bounces / plaintes (liste de suppression).

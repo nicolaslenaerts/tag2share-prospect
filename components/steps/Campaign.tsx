@@ -872,6 +872,41 @@ function TestSend({
   );
 }
 
+// Regroupement des destinataires par état. L'ordre définit l'affichage des sections.
+const RECIPIENT_GROUPS: {
+  key: string;
+  label: string;
+  color: any;
+  match: (r: Recipient) => boolean;
+  defaultCollapsed?: boolean;
+}[] = [
+  {
+    key: "todo",
+    label: "À approuver",
+    color: "gray",
+    match: (r) => r.status === "draft" || r.status === "test_sent",
+  },
+  {
+    key: "approved",
+    label: "Approuvés",
+    color: "blue",
+    match: (r) => r.status === "approved",
+  },
+  {
+    key: "sent",
+    label: "Déjà envoyés",
+    color: "green",
+    match: (r) => r.status === "sent",
+    defaultCollapsed: true,
+  },
+  {
+    key: "failed",
+    label: "Échecs d'envoi",
+    color: "red",
+    match: (r) => r.status === "failed",
+  },
+];
+
 function RecipientList({
   campaign, recipients, reload, setMsg,
 }: {
@@ -880,6 +915,16 @@ function RecipientList({
 }) {
   const campaignId = campaign.id;
   const [openId, setOpenId] = useState<string | null>(null);
+  const [collapsed, setCollapsed] = useState<Set<string>>(
+    () => new Set(RECIPIENT_GROUPS.filter((g) => g.defaultCollapsed).map((g) => g.key))
+  );
+  function toggleGroup(key: string) {
+    setCollapsed((s) => {
+      const n = new Set(s);
+      n.has(key) ? n.delete(key) : n.add(key);
+      return n;
+    });
+  }
 
   async function patch(recipientId: string, fields: any) {
     await api(`/api/campaigns/${campaignId}/recipients`, {
@@ -940,6 +985,18 @@ function RecipientList({
       </Card>
     );
 
+  // Répartition dans les groupes (ordre défini par RECIPIENT_GROUPS). Tout statut
+  // visible non couvert tombe dans un groupe « Autres » de secours.
+  const grouped = RECIPIENT_GROUPS.map((g) => ({
+    ...g,
+    items: visible.filter(g.match),
+  }));
+  const covered = new Set(grouped.flatMap((g) => g.items.map((r) => r.id)));
+  const others = visible.filter((r) => !covered.has(r.id));
+  const sections = others.length
+    ? [...grouped, { key: "other", label: "Autres", color: "gray" as any, items: others }]
+    : grouped;
+
   return (
     <Card className="overflow-hidden">
       <div className="flex items-center justify-between border-b border-gray-100 p-3">
@@ -958,22 +1015,49 @@ function RecipientList({
           </tr>
         </thead>
         <tbody>
-          {visible.map((r) => (
-            <RecipientRow
-              key={r.id}
-              r={r}
-              campaign={campaign}
-              open={openId === r.id}
-              onToggle={() => setOpenId(openId === r.id ? null : r.id)}
-              patch={patch}
-              sendTest={sendTest}
-              remove={remove}
-            />
-          ))}
+          {sections.map((g) => {
+            if (g.items.length === 0) return null;
+            const isCollapsed = collapsed.has(g.key);
+            return (
+              <GroupRows key={g.key}>
+                <tr
+                  className="cursor-pointer border-t border-gray-200 bg-gray-50/80 hover:bg-gray-100"
+                  onClick={() => toggleGroup(g.key)}
+                >
+                  <td colSpan={4} className="px-3 py-2">
+                    <div className="flex items-center gap-2 text-xs font-semibold uppercase text-gray-600">
+                      <span className="text-gray-400">{isCollapsed ? "▸" : "▾"}</span>
+                      <Badge color={g.color}>{g.label}</Badge>
+                      <span className="text-gray-400">({g.items.length})</span>
+                    </div>
+                  </td>
+                </tr>
+                {!isCollapsed &&
+                  g.items.map((r) => (
+                    <RecipientRow
+                      key={r.id}
+                      r={r}
+                      campaign={campaign}
+                      open={openId === r.id}
+                      onToggle={() => setOpenId(openId === r.id ? null : r.id)}
+                      patch={patch}
+                      sendTest={sendTest}
+                      remove={remove}
+                    />
+                  ))}
+              </GroupRows>
+            );
+          })}
         </tbody>
       </table>
     </Card>
   );
+}
+
+// Conteneur logique pour un groupe de lignes (header + lignes). React tolère un
+// fragment comme enfant de <tbody>, ce wrapper sert juste à porter une key stable.
+function GroupRows({ children }: { children: React.ReactNode }) {
+  return <>{children}</>;
 }
 
 function statusColor(s: string): any {

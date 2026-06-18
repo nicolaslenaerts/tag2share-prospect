@@ -323,23 +323,40 @@ export function Prospects({ onNext }: { onNext: () => void }) {
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [fEnriched, setFEnriched] = useState<"all" | "yes" | "no">("all");
   const [fEmail, setFEmail] = useState<"all" | "yes" | "no">("all");
-  const [fCampaign, setFCampaign] = useState<string>("all");
+  const [fWebsite, setFWebsite] = useState<"all" | "yes" | "no">("all");
+  // Segments sélectionnés pour le filtre (par id ; vide = tous).
+  const [fSegments, setFSegments] = useState<Set<string>>(new Set());
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
   const [detailId, setDetailId] = useState<string | null>(null);
   const detail = detailId ? list.find((p) => p.id === detailId) ?? null : null;
 
-  // Liste des campagnes apparaissant dans l'historique de contact des prospects.
-  const campaignOptions = useMemo(() => {
-    const names = new Set<string>();
-    for (const p of list) for (const c of p.emailed_campaigns ?? []) names.add(c);
-    return [...names].sort((a, b) => a.localeCompare(b, "fr", { sensitivity: "base" }));
+  // Liste des segments présents chez les prospects (dédoublonnés par id).
+  const segmentOptions = useMemo(() => {
+    const byId = new Map<string, string>();
+    for (const p of list) for (const s of p.segments ?? []) byId.set(s.id, s.label);
+    return [...byId.entries()]
+      .map(([id, label]) => ({ id, label }))
+      .sort((a, b) => a.label.localeCompare(b.label, "fr", { sensitivity: "base" }));
   }, [list]);
 
-  // Réinitialise le filtre si la campagne sélectionnée disparaît de la liste.
+  // Retire du filtre les segments qui disparaissent de la liste.
   useEffect(() => {
-    if (fCampaign !== "all" && !campaignOptions.includes(fCampaign)) setFCampaign("all");
-  }, [campaignOptions, fCampaign]);
+    const valid = new Set(segmentOptions.map((s) => s.id));
+    setFSegments((prev) => {
+      const next = new Set([...prev].filter((id) => valid.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [segmentOptions]);
+
+  function toggleSegment(id: string) {
+    setFSegments((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
 
   const filtered = useMemo(() => {
     return list.filter((p) => {
@@ -348,11 +365,17 @@ export function Prospects({ onNext }: { onNext: () => void }) {
       const hasEmail = !!(p.email && p.email.trim());
       if (fEmail === "yes" && !hasEmail) return false;
       if (fEmail === "no" && hasEmail) return false;
-      if (fCampaign !== "all" && !(p.emailed_campaigns ?? []).includes(fCampaign))
+      const hasWebsite = !!(p.website && p.website.trim());
+      if (fWebsite === "yes" && !hasWebsite) return false;
+      if (fWebsite === "no" && hasWebsite) return false;
+      if (
+        fSegments.size > 0 &&
+        !(p.segments ?? []).some((s) => fSegments.has(s.id))
+      )
         return false;
       return true;
     });
-  }, [list, fEnriched, fEmail, fCampaign]);
+  }, [list, fEnriched, fEmail, fWebsite, fSegments]);
 
   const sorted = useMemo(() => {
     if (!sortKey) return filtered;
@@ -380,7 +403,7 @@ export function Prospects({ onNext }: { onNext: () => void }) {
   // Retour à la première page dès qu'un filtre, un tri ou la taille de page change.
   useEffect(() => {
     setPage(1);
-  }, [fEnriched, fEmail, fCampaign, sortKey, sortDir, pageSize]);
+  }, [fEnriched, fEmail, fWebsite, fSegments, sortKey, sortDir, pageSize]);
 
   function toggleSort(key: SortKey) {
     if (sortKey === key) {
@@ -533,21 +556,51 @@ export function Prospects({ onNext }: { onNext: () => void }) {
               { key: "no", label: "Sans email" },
             ]}
           />
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-medium text-gray-600">Campagne :</span>
-            <select
-              value={fCampaign}
-              onChange={(e) => setFCampaign(e.target.value)}
-              className="rounded-md border border-gray-200 bg-white px-2 py-1 text-xs font-medium text-gray-700 focus:border-brand focus:outline-none"
-            >
-              <option value="all">Toutes</option>
-              {campaignOptions.map((c) => (
-                <option key={c} value={c}>
-                  {c}
-                </option>
-              ))}
-            </select>
-          </div>
+          <PillGroup
+            label="Site web"
+            value={fWebsite}
+            onChange={setFWebsite}
+            options={[
+              { key: "all", label: "Tous" },
+              { key: "yes", label: "Avec site" },
+              { key: "no", label: "Sans site" },
+            ]}
+          />
+          {segmentOptions.length > 0 && (
+            <div className="flex items-start gap-2">
+              <span className="mt-1 text-xs font-medium text-gray-600">Segments :</span>
+              <div className="flex flex-wrap items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setFSegments(new Set())}
+                  className={`rounded-md px-2 py-1 text-xs font-medium transition ${
+                    fSegments.size === 0
+                      ? "bg-brand text-white"
+                      : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                  }`}
+                >
+                  Tous
+                </button>
+                {segmentOptions.map((s) => {
+                  const active = fSegments.has(s.id);
+                  return (
+                    <button
+                      key={s.id}
+                      type="button"
+                      onClick={() => toggleSegment(s.id)}
+                      className={`rounded-md px-2 py-1 text-xs font-medium transition ${
+                        active
+                          ? "bg-brand text-white"
+                          : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                      }`}
+                    >
+                      {s.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
       </Card>
 

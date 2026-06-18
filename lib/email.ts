@@ -372,6 +372,13 @@ export function wrapEmail(
           ${bodyHtml}
         </td></tr>
         <tr><td style="padding:24px 30px;background-color:#f8f9fa;text-align:center;border-top:1px solid #e9ecef;">
+          <p style="margin:0 0 12px;font-size:13px;">
+            <a href="https://www.instagram.com/tag_2_share/" style="color:rgb(20,74,102);font-weight:600;text-decoration:none;">Instagram</a>
+            <span style="color:#cccccc;">&nbsp;·&nbsp;</span>
+            <a href="https://www.facebook.com/Tag2Share" style="color:rgb(20,74,102);font-weight:600;text-decoration:none;">Facebook</a>
+            <span style="color:#cccccc;">&nbsp;·&nbsp;</span>
+            <a href="https://www.linkedin.com/company/tag2share" style="color:rgb(20,74,102);font-weight:600;text-decoration:none;">LinkedIn</a>
+          </p>
           <p style="margin:0;color:#999999;font-size:12px;">© ${new Date().getFullYear()} ${identityLine}</p>
           ${unsubLine}
         </td></tr>
