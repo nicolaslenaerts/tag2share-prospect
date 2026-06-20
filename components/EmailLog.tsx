@@ -27,6 +27,33 @@ type Resp = {
   totalPages: number;
 };
 
+type CampaignStat = {
+  campaign_id: string | null;
+  campaign_name: string;
+  sent: number;
+  delivered: number;
+  opened: number;
+  clicked: number;
+  bounced: number;
+  complained: number;
+  unsubscribed: number;
+  rates: {
+    delivered: number;
+    opened: number;
+    clicked: number;
+    bounced: number;
+    unsubscribed: number;
+  };
+};
+
+type StatsResp = {
+  windowDays: number;
+  totalSent: number;
+  refreshed: number;
+  refreshErrors: number;
+  campaigns: CampaignStat[];
+};
+
 const EVENT_LABEL: Record<string, string> = {
   delivered: "Délivré",
   opened: "Ouvert",
@@ -57,6 +84,22 @@ export function EmailLog() {
   const [status, setStatus] = useState("");
   const [q, setQ] = useState("");
   const [loading, setLoading] = useState(true);
+  const [stats, setStats] = useState<StatsResp | null>(null);
+  const [statsLoading, setStatsLoading] = useState(false);
+  const [statsError, setStatsError] = useState<string | null>(null);
+
+  async function computeStats() {
+    setStatsLoading(true);
+    setStatsError(null);
+    try {
+      const r = await api<StatsResp>("/api/email-log/stats", { method: "POST" });
+      setStats(r);
+    } catch (e) {
+      setStatsError((e as Error).message || "Erreur lors du calcul des taux.");
+    } finally {
+      setStatsLoading(false);
+    }
+  }
 
   async function load() {
     setLoading(true);
@@ -103,11 +146,87 @@ export function EmailLog() {
               avant et le suivi de délivrabilité.
             </p>
           </div>
-          <Link href="/" className="text-sm font-semibold text-brand underline">
-            ← Retour à la prospection
-          </Link>
+          <div className="flex items-center gap-3">
+            <Button onClick={computeStats} disabled={statsLoading}>
+              {statsLoading ? <Spinner /> : null}
+              Calculer les taux (6 j)
+            </Button>
+            <Link href="/" className="text-sm font-semibold text-brand underline">
+              ← Retour à la prospection
+            </Link>
+          </div>
         </div>
       </Card>
+
+      {statsError && (
+        <Card className="border-red-200 bg-red-50 p-4 text-sm text-red-600">{statsError}</Card>
+      )}
+
+      {stats && (
+        <Card className="p-5">
+          <div className="mb-3">
+            <h3 className="text-base font-bold">
+              Taux par campagne · {stats.totalSent} email(s) envoyé(s) sur {stats.windowDays} jours
+            </h3>
+            <p className="text-xs text-gray-500">
+              Taux en % des emails envoyés. {stats.refreshed} statut(s) rafraîchi(s) depuis Resend
+              {stats.refreshErrors > 0 && ` · ${stats.refreshErrors} en échec`}.
+            </p>
+          </div>
+          {stats.campaigns.length === 0 ? (
+            <p className="p-4 text-center text-sm text-gray-400">
+              Aucun email envoyé sur cette période.
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50 text-left text-xs uppercase text-gray-500">
+                  <tr>
+                    <th className="p-3">Campagne</th>
+                    <th className="p-3 text-right">Envoyés</th>
+                    <th className="p-3 text-right">Délivrés</th>
+                    <th className="p-3 text-right">Ouverts</th>
+                    <th className="p-3 text-right">Cliqués</th>
+                    <th className="p-3 text-right">Bounces</th>
+                    <th className="p-3 text-right">Désinscrits</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {stats.campaigns.map((c) => (
+                    <tr
+                      key={c.campaign_id ?? c.campaign_name}
+                      className="border-t border-gray-100"
+                    >
+                      <td className="p-3 font-medium">{c.campaign_name}</td>
+                      <td className="p-3 text-right tabular-nums">{c.sent}</td>
+                      <td className="p-3 text-right tabular-nums">
+                        {c.rates.delivered}%{" "}
+                        <span className="text-xs text-gray-400">({c.delivered})</span>
+                      </td>
+                      <td className="p-3 text-right tabular-nums">
+                        {c.rates.opened}%{" "}
+                        <span className="text-xs text-gray-400">({c.opened})</span>
+                      </td>
+                      <td className="p-3 text-right tabular-nums">
+                        {c.rates.clicked}%{" "}
+                        <span className="text-xs text-gray-400">({c.clicked})</span>
+                      </td>
+                      <td className="p-3 text-right tabular-nums">
+                        {c.rates.bounced}%{" "}
+                        <span className="text-xs text-gray-400">({c.bounced})</span>
+                      </td>
+                      <td className="p-3 text-right tabular-nums">
+                        {c.rates.unsubscribed}%{" "}
+                        <span className="text-xs text-gray-400">({c.unsubscribed})</span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card>
+      )}
 
       <Card className="p-5">
         <div className="mb-3 flex flex-wrap items-center gap-2">

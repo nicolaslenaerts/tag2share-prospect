@@ -33,6 +33,8 @@ type Recipient = {
   id: string; status: string; to_email?: string; custom_subject?: string;
   custom_html?: string; sent_at?: string; error?: string; prospect: Prospect;
   suppressed?: boolean; suppression_reason?: string | null;
+  emailed?: boolean; emailed_at?: string | null;
+  emailed_campaigns?: string[]; emailed_products?: string[];
 };
 
 const SUPPRESSION_LABEL: Record<string, string> = {
@@ -367,7 +369,10 @@ function CampaignEditor({
       ? productKeys.map((k) => getProduct(k))
       : PRODUCT_LIST;
 
-  const approved = recipients.filter((r) => r.status === "approved");
+  // Envoyables : approuvés et jamais contactés (le serveur re-vérifie de toute façon).
+  const approved = recipients.filter(
+    (r) => r.status === "approved" && !isAlreadyContacted(r)
+  );
 
   async function sendAll() {
     if (approved.length === 0) return;
@@ -872,7 +877,17 @@ function TestSend({
   );
 }
 
+// Destinataire déjà contacté : soit marqué par l'envoi (status), soit repéré via
+// le journal des envois (emailed, toutes campagnes). On exclut les états terminaux
+// de CETTE campagne (envoyé/échoué) qui restent dans leurs propres groupes.
+function isAlreadyContacted(r: Recipient): boolean {
+  if (r.status === "already_contacted") return true;
+  return !!r.emailed && r.status !== "sent" && r.status !== "failed";
+}
+
 // Regroupement des destinataires par état. L'ordre définit l'affichage des sections.
+// Les `match` sont mutuellement exclusifs : un destinataire « déjà contacté » ne
+// réapparaît pas dans « À approuver » ou « Approuvés ».
 const RECIPIENT_GROUPS: {
   key: string;
   label: string;
@@ -884,13 +899,19 @@ const RECIPIENT_GROUPS: {
     key: "todo",
     label: "À approuver",
     color: "gray",
-    match: (r) => r.status === "draft" || r.status === "test_sent",
+    match: (r) => (r.status === "draft" || r.status === "test_sent") && !isAlreadyContacted(r),
+  },
+  {
+    key: "already_contacted",
+    label: "Destinataires déjà contactés",
+    color: "amber",
+    match: isAlreadyContacted,
   },
   {
     key: "approved",
     label: "Approuvés",
     color: "blue",
-    match: (r) => r.status === "approved",
+    match: (r) => r.status === "approved" && !isAlreadyContacted(r),
   },
   {
     key: "sent",
@@ -960,13 +981,15 @@ function RecipientList({
   // Destinataires visibles : on masque les exclus (« retirés » via exclusion douce).
   const visible = recipients.filter((r) => r.status !== "excluded");
 
-  // Approuvables : ni déjà approuvés, ni envoyés/échoués, ni exclus, ni supprimés.
+  // Approuvables : ni déjà approuvés, ni envoyés/échoués, ni exclus, ni supprimés,
+  // ni déjà contactés (jamais re-contacter une adresse déjà jointe).
   const approvable = visible.filter(
     (r) =>
       r.status !== "approved" &&
       r.status !== "sent" &&
       r.status !== "failed" &&
-      !r.suppressed
+      !r.suppressed &&
+      !isAlreadyContacted(r)
   );
   async function approveAll() {
     if (approvable.length === 0) return;
@@ -1062,9 +1085,14 @@ function GroupRows({ children }: { children: React.ReactNode }) {
 
 function statusColor(s: string): any {
   return (
-    { draft: "gray", test_sent: "amber", approved: "blue", sent: "green", failed: "red" }[
-      s
-    ] || "gray"
+    {
+      draft: "gray",
+      test_sent: "amber",
+      approved: "blue",
+      sent: "green",
+      failed: "red",
+      already_contacted: "amber",
+    }[s] || "gray"
   );
 }
 
@@ -1081,8 +1109,10 @@ function RecipientRow({
   const [ch, setCh] = useState(r.custom_html || "");
   // Produit affiché = produit cible de la campagne s'il est défini, sinon segment d'origine (comme à l'envoi).
   const product = getProduct(campaign.product || r.prospect.segment?.product);
-  // Email déjà traité (envoyé ou échoué) : plus d'édition/test, seulement un aperçu.
-  const locked = r.status === "sent" || r.status === "failed";
+  // Email déjà traité (envoyé, échoué) ou adresse déjà contactée ailleurs : plus
+  // d'édition/test/approbation, seulement un aperçu.
+  const contacted = isAlreadyContacted(r);
+  const locked = r.status === "sent" || r.status === "failed" || contacted;
 
   // Aperçu du mail tel qu'il (sera) envoyé — rendu identique à l'envoi réel,
   // hors lien de désinscription signé (placeholder en aperçu).
@@ -1110,6 +1140,21 @@ function RecipientRow({
             {r.suppressed && (
               <span title="Ne sera pas envoyé (liste de suppression)">
                 <Badge color="red">{suppressionLabel(r.suppression_reason)}</Badge>
+              </span>
+            )}
+            {contacted && !r.suppressed && (
+              <span
+                title={
+                  "Déjà contacté — ne sera pas renvoyé" +
+                  (r.emailed_at
+                    ? " · le " + new Date(r.emailed_at).toLocaleDateString("fr-BE")
+                    : "") +
+                  (r.emailed_campaigns?.length
+                    ? " · " + r.emailed_campaigns.join(", ")
+                    : "")
+                }
+              >
+                <Badge color="amber">↩ déjà contacté</Badge>
               </span>
             )}
           </div>

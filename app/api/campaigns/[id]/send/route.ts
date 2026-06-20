@@ -67,6 +67,22 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const emails = (recipients ?? []).map((r) => r.to_email || r.prospect?.email || "");
   const suppressed = await suppressedSet(emails);
 
+  // Emails DÉJÀ contactés (toutes campagnes confondues) : journal immuable, source
+  // de vérité. On ne renvoie jamais à une adresse déjà jointe par un envoi réussi,
+  // même via une autre campagne ou un autre prospect partageant la même adresse.
+  // Cet ensemble est aussi enrichi au fil de l'envoi pour bloquer les doublons
+  // présents dans le lot courant (ex. deux prospects avec le même email).
+  const normalizedEmails = Array.from(new Set(emails.map(normEmail).filter(Boolean)));
+  const alreadyContacted = new Set<string>();
+  if (normalizedEmails.length > 0) {
+    const { data: logged } = await db
+      .from("email_log")
+      .select("to_email")
+      .eq("status", "sent")
+      .in("to_email", normalizedEmails);
+    for (const row of logged ?? []) alreadyContacted.add(normEmail(row.to_email));
+  }
+
   const results: any[] = [];
   for (const r of recipients || []) {
     if (r.status === "sent") {
@@ -90,6 +106,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         .update({ status: "skipped", error: "liste de suppression" })
         .eq("id", r.id);
       results.push({ id: r.id, to, skipped: "supprimé/désinscrit" });
+      continue;
+    }
+
+    // Déjà contacté (même via une autre campagne / un autre prospect) : on ne
+    // renvoie jamais. Le destinataire bascule dans le groupe « Déjà contactés ».
+    if (alreadyContacted.has(normEmail(to))) {
+      await db
+        .from("campaign_recipients")
+        .update({ status: "already_contacted", error: "déjà contacté" })
+        .eq("id", r.id);
+      results.push({ id: r.id, to, skipped: "déjà contacté" });
       continue;
     }
 
@@ -152,6 +179,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         resendId,
         replyTo,
       });
+      // Marque cette adresse comme contactée pour bloquer tout doublon ultérieur
+      // dans ce même lot (deux destinataires partageant la même adresse).
+      alreadyContacted.add(normEmail(to));
       results.push({ id: r.id, to, sent: true });
       remaining -= 1;
       if (delayMs > 0) await sleep(delayMs);
