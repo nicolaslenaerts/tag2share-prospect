@@ -29,6 +29,17 @@ export function productList(brand: BrandConfig): Product[] {
   return brand.products;
 }
 
+/** Libellé d'un produit dans l'interface (repli : son nom d'email). */
+export function productLabel(p: Product): string {
+  return p.uiLabel ?? p.name;
+}
+
+/** Produit présélectionné dans l'interface (repli : premier du catalogue). */
+export function defaultProduct(brand: BrandConfig): Product {
+  const wanted = brand.products.find((p) => p.key === brand.defaultProductKey);
+  return wanted ?? brand.products[0];
+}
+
 /**
  * Normalise un libellé/clé libre vers une clé produit de CETTE marque.
  * Ordre de résolution : clé exacte, puis correspondance sur le nom ou un alias,
@@ -76,6 +87,9 @@ export function otherProducts(
 /** Catalogue formaté pour un prompt IA. */
 export function productsPrompt(brand: BrandConfig): string {
   return brand.products
-    .map((p) => `- [${p.key}] ${p.name} (${p.price}) : ${p.description}`)
+    .map(
+      (p) =>
+        `- [${p.key}] ${p.name}${p.price ? ` (${p.price})` : ""} : ${p.description}`
+    )
     .join("\n");
 }

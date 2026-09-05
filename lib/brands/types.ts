@@ -16,8 +16,23 @@
 export type Product = {
   /** Clé stable stockée en base (segments.product, campaigns.product, email_log.product_key). */
   key: string;
+  /**
+   * Nom employé DANS L'EMAIL, donc dans une phrase : « Découvrir {{product_name}} ».
+   * Il doit se lire naturellement à cet endroit.
+   */
   name: string;
-  price: string;
+  /**
+   * Libellé employé DANS L'INTERFACE (menus, badges). Par défaut `name`.
+   * Utile quand les deux divergent : une offre globale s'annonce « Général »
+   * dans un menu déroulant, mais « Horodo » dans une phrase.
+   */
+  uiLabel?: string;
+  /**
+   * Prix affichable. Optionnel : un produit « offre globale », qui présente les
+   * fonctionnalités plutôt qu'une formule, n'en a pas. {{product_price}} rend
+   * alors une chaîne vide.
+   */
+  price?: string;
   shopUrl: string;
   configUrl: string;
   description: string;
@@ -123,18 +138,49 @@ export type BrandConfig = {
    * domaines (ou leurs sous-domaines) reçoivent les paramètres UTM.
    */
   domains: string[];
+  /**
+   * URL PUBLIQUE de cet outil pour cette marque, ex.
+   * `https://marketing.horodo.be`. C'est elle qui préfixe tous les liens
+   * hébergés par l'app et visibles par un prospect : aujourd'hui le lien de
+   * désinscription du pied d'email.
+   *
+   * Ce n'est pas un détail cosmétique. Un email signé Horodo dont le lien de
+   * désinscription pointe vers marketing.tag2share.com révèle une marque que
+   * le destinataire ne connaît pas, et les filtres anti-spam pénalisent un
+   * domaine de lien étranger au domaine d'envoi.
+   *
+   * Le domaine doit servir la MÊME instance (même déploiement, même base) :
+   * la vérification du lien signé se fait sur le serveur qui le reçoit.
+   * Absent → repli sur la variable d'environnement APP_URL.
+   */
+  appUrl?: string;
   theme: BrandTheme;
   /** Page boutique générique (CTA de repli). */
   shopUrl: string;
   email: {
     layout: EmailLayoutKey;
     socials: SocialLink[];
+    /**
+     * Proposer l'encart {{products_more}} (« À découvrir aussi ») dans les
+     * emails rédigés par l'IA. À laisser à false pour une marque dont le
+     * catalogue est une grille de formules : lister les paliers tarifaires sous
+     * un email de prospection déplace la conversation sur le prix trop tôt.
+     * Par défaut true (comportement historique).
+     */
+    showProductsMore?: boolean;
   };
   sender: BrandSender;
   /** Contenu par défaut d'une nouvelle campagne. */
   defaults: { subject: string; body: string; tagline: string };
   /** Catalogue. Le PREMIER produit sert de repli quand aucun n'est résolu. */
   products: Product[];
+  /**
+   * Produit présélectionné dans l'interface (étape 1). Par défaut, le premier
+   * du catalogue. Ne change PAS la résolution de repli de normalizeProductKey,
+   * qui reste le premier produit : ce sont deux questions différentes, « que
+   * proposer à l'utilisateur » et « que faire d'une valeur inconnue ».
+   */
+  defaultProductKey?: string;
   ai: BrandAi;
 };
 

@@ -11,7 +11,7 @@ type Ctx = { params: Promise<{ id: string }> };
 // Détail d'une campagne + destinataires (avec le prospect joint)
 export async function GET(req: Request, { params }: Ctx) {
   const { id } = await params;
-  const brand = activeBrand(req);
+  const brand = await activeBrand(req);
   const db = supabaseAdmin();
   const { data: campaign, error } = await db
     .from("campaigns")
@@ -120,7 +120,7 @@ export async function GET(req: Request, { params }: Ctx) {
 // Mise à jour du template (sujet/corps/nom/statut)
 export async function PATCH(req: Request, { params }: Ctx) {
   const { id } = await params;
-  const brand = activeBrand(req);
+  const brand = await activeBrand(req);
   // `brand` n'est pas modifiable : déplacer une campagne d'une marque à l'autre
   // rendrait son email (catalogue, identité, UTM) incohérent avec ses envois
   // déjà journalisés.
@@ -139,7 +139,7 @@ export async function PATCH(req: Request, { params }: Ctx) {
 
 export async function DELETE(req: Request, { params }: Ctx) {
   const { id } = await params;
-  const brand = activeBrand(req);
+  const brand = await activeBrand(req);
   const db = supabaseAdmin();
   const { error } = await db
     .from("campaigns")

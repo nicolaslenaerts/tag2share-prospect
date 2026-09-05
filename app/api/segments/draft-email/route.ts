@@ -19,8 +19,9 @@ export async function POST(req: Request) {
   }>(req);
   if (!label) return fail("label requis.");
 
-  const brand = activeBrand(req);
+  const brand = await activeBrand(req);
   const p = getProduct(brand, product);
+  const showMore = brand.email.showProductsMore !== false;
 
   const prompt = `Tu es copywriter B2B pour ${brand.name}. Rédige un email de prospection à froid, en français, percutant et orienté marketing.
 
@@ -39,8 +40,11 @@ CONTRAINTES :${brandForbiddenBlock(brand)}
 - Inclus impérativement un BOUTON cliquable vers la PAGE PRODUIT. Copie EXACTEMENT ce bouton :
   <table cellpadding="0" cellspacing="0" style="margin:20px auto;"><tr><td style="border-radius:8px;background:rgb(20,74,102);"><a href="${p.shopUrl}" style="display:inline-block;padding:14px 30px;color:#ffffff;text-decoration:none;font-weight:700;">Découvrir le ${p.name}</a></td></tr></table>
 - Inclus aussi un LIEN texte bien visible vers le CONFIGURATEUR : <a href="${p.configUrl}">personnaliser votre ${p.name}</a> (les liens seront mis en couleur automatiquement).
-- Termine le corps par une ligne contenant EXACTEMENT le token {{products_more}} (un encart "autres produits" y sera inséré automatiquement), juste avant la signature.
-- Ton chaleureux, concret, sans jargon. 130-200 mots. Termine par "${brand.ai.signature}".
+${
+    showMore
+      ? '- Termine le corps par une ligne contenant EXACTEMENT le token {{products_more}} (un encart "autres produits" y sera inséré automatiquement), juste avant la signature.\n'
+      : "- N'ajoute AUCUN encart listant les autres produits ou formules, et n'emploie pas le token {{products_more}}.\n"
+  }- Ton chaleureux, concret, sans jargon. 130-200 mots. Termine par "${brand.ai.signature}".
 - Sujet court et accrocheur (max ~60 caractères), peut contenir {{name}}.
 
 Réponds en JSON STRICT : {"subject": "...", "body": "<p>...</p>"}`;
@@ -48,8 +52,13 @@ Réponds en JSON STRICT : {"subject": "...", "body": "<p>...</p>"}`;
   try {
     const data = await geminiJSON<{ subject: string; body: string }>(prompt);
     let body = data.body || "";
-    // Garantit la présence du bloc "autres produits".
-    if (!body.includes("{{products_more}}")) body += "\n\n{{products_more}}";
+    // Garantit la présence du bloc "autres produits" quand la marque le veut,
+    // et le retire si elle n'en veut pas (l'IA peut l'ajouter d'elle-même).
+    if (showMore) {
+      if (!body.includes("{{products_more}}")) body += "\n\n{{products_more}}";
+    } else {
+      body = body.replace(/\{\{\s*products_more\s*\}\}/gi, "").trimEnd();
+    }
     return ok({ subject: data.subject, body, product: p.key });
   } catch (e) {
     return fail(`Erreur Gemini : ${(e as Error).message}`, 500);

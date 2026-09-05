@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { Button, Card, Input, Badge, Spinner } from "@/components/ui";
-import { normalizeProductKey } from "@/lib/products";
+import { defaultProduct, normalizeProductKey, productLabel } from "@/lib/products";
 import { useBrand } from "@/components/BrandProvider";
 
 type Suggested = {
@@ -26,11 +26,9 @@ export function Segments({ onNext }: { onNext: () => void }) {
   const brand = useBrand();
   const products = brand.products;
   const [country, setCountry] = useState("Belgique");
-  // Produit proposé par défaut : le dernier du catalogue de la marque (pour
-  // Tag2Share, le présentoir - le plus vendeur en prospection à froid).
-  const [product, setProduct] = useState<string>(
-    products[products.length - 1]?.key ?? ""
-  );
+  // Produit présélectionné : déclaré par la marque (defaultProductKey), sinon
+  // le premier du catalogue.
+  const [product, setProduct] = useState<string>(defaultProduct(brand).key);
   const [hint, setHint] = useState("");
   const [loading, setLoading] = useState(false);
   const [suggestions, setSuggestions] = useState<Suggested[]>([]);
@@ -99,7 +97,7 @@ export function Segments({ onNext }: { onNext: () => void }) {
             >
               {products.map((p) => (
                 <option key={p.key} value={p.key}>
-                  {p.name}
+                  {productLabel(p)}
                 </option>
               ))}
             </select>
@@ -134,7 +132,11 @@ export function Segments({ onNext }: { onNext: () => void }) {
         <Card className="p-5">
           <div className="mb-3 flex items-center justify-between">
             <h3 className="font-bold">
-              Business pour : {products.find((p) => p.key === product)?.name}
+              Business pour :{" "}
+              {(() => {
+                const p = products.find((x) => x.key === product);
+                return p ? productLabel(p) : "";
+              })()}
             </h3>
             <Button onClick={saveSelected}>
               Valider la sélection ({suggestions.filter((s) => s._selected).length})
@@ -214,7 +216,12 @@ function SavedSegment({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <span className="font-semibold">{seg.label}</span>{" "}
-          <Badge color="blue">{products.find((p) => p.key === product)?.name}</Badge>
+          <Badge color="blue">
+            {(() => {
+              const p = products.find((x) => x.key === product);
+              return p ? productLabel(p) : product;
+            })()}
+          </Badge>
           <p className="text-xs text-gray-400">{seg.search_terms?.join(", ")}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -228,7 +235,7 @@ function SavedSegment({
             >
               {products.map((p) => (
                 <option key={p.key} value={p.key}>
-                  {p.name}
+                  {productLabel(p)}
                 </option>
               ))}
             </select>

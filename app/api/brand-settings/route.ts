@@ -20,7 +20,7 @@ export const runtime = "nodejs";
  *   - defaults  : le défaut du code, affiché en placeholder
  */
 export async function GET(req: Request) {
-  const brand = activeBrand(req);
+  const brand = await activeBrand(req);
   const [settings, effective] = await Promise.all([
     readBrandSettings(brand.slug),
     brandSender(brand),
@@ -47,7 +47,7 @@ export async function GET(req: Request) {
  * d'injecter des en-têtes supplémentaires.
  */
 export async function PATCH(req: Request) {
-  const brand = activeBrand(req);
+  const brand = await activeBrand(req);
   const body = await readJson<{
     from_name?: string | null;
     from_email?: string | null;

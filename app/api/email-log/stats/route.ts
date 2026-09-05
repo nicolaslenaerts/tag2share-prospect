@@ -37,7 +37,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
  * partagé par toutes les marques), puis agrège.
  */
 export async function POST(req: Request) {
-  const brand = activeBrand(req);
+  const brand = await activeBrand(req);
   const db = supabaseAdmin();
   const since = new Date(Date.now() - WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
 

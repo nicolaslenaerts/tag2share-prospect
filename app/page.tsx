@@ -23,6 +23,7 @@ export default function Home() {
         links={[
           { href: "/emails", label: "Emails envoyés" },
           { href: "/suppressions", label: "Liste de suppression" },
+          { href: "/marques", label: "Marques" },
           { href: "/reglages", label: "Réglages" },
         ]}
       />

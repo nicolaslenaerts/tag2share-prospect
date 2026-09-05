@@ -3,8 +3,9 @@ import { ok, fail, readJson } from "@/lib/http";
 import { buildRecipientEmail, type MergeData } from "@/lib/email";
 import { sendEmail } from "@/lib/resend";
 import { unsubscribeUrl } from "@/lib/unsubscribe";
+import { publicBaseFor } from "@/lib/public-url";
 import { activeBrand } from "@/lib/brand-context";
-import { getBrand } from "@/lib/brands";
+import { resolveBrandStrict } from "@/lib/brands/store";
 import { brandSender } from "@/lib/brand-sender";
 import { resolveProspectSegments } from "@/lib/campaign-segments";
 
@@ -24,7 +25,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }>(req);
   if (!recipientId) return fail("recipientId requis.");
 
-  const requestBrand = activeBrand(req);
+  const requestBrand = await activeBrand(req);
   const db = supabaseAdmin();
   const { data: campaign } = await db
     .from("campaigns")
@@ -40,14 +41,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     .single();
   if (!campaign || !recipient) return fail("Campagne ou destinataire introuvable.", 404);
 
-  // Identité d'envoi = marque de la campagne.
+  // Identité d'envoi = marque de la campagne. Un email de TEST part même si la
+  // marque est encore en brouillon : c'est précisément l'outil qui sert à la
+  // vérifier avant de l'activer.
   let brand;
   try {
-    brand = getBrand(campaign.brand);
+    brand = await resolveBrandStrict(campaign.brand);
   } catch (e) {
     return fail((e as Error).message, 500);
   }
 
+  // Domaine public de la marque : l'app peut répondre sur plusieurs noms de
+  // domaine, le lien de désinscription doit sortir sur celui de la marque.
+  const publicBase = await publicBaseFor(brand, req);
   const sender = await brandSender(brand);
   const to = testEmail || sender.testEmail;
   if (!to)
@@ -68,7 +74,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     prospect: recipient.prospect,
     segment: segments.get(recipient.prospect_id) ?? null,
     overrideData,
-    unsubscribeUrl: realEmail ? unsubscribeUrl(realEmail, brand.slug) : null,
+    unsubscribeUrl: realEmail ? unsubscribeUrl(realEmail, brand, publicBase) : null,
   });
 
   try {

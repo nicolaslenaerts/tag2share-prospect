@@ -1,17 +1,18 @@
 "use client";
-import { BRAND_COOKIE } from "@/lib/brand-context";
-import { brandOptions } from "@/lib/brands";
-import { useBrand } from "./BrandProvider";
+import { BRAND_COOKIE } from "@/lib/brand-cookie";
+import { useBrandContext } from "./BrandProvider";
 
 /**
  * Sélecteur de marque. Écrit le cookie `brand` puis recharge la page :
  * toutes les données (segments, prospects, campagnes) sont chargées côté
  * client via lib/api.ts, donc un rechargement complet garantit qu'aucune
  * donnée de l'ancienne marque ne subsiste à l'écran.
+ *
+ * La liste vient du serveur (app/layout.tsx) : elle inclut les marques créées
+ * dans l'interface, que le navigateur ne peut pas résoudre lui-même.
  */
 export function BrandSwitcher() {
-  const brand = useBrand();
-  const options = brandOptions();
+  const { brand, options } = useBrandContext();
   if (options.length < 2) return null;
 
   function select(slug: string) {
@@ -33,7 +34,10 @@ export function BrandSwitcher() {
       >
         {options.map((o) => (
           <option key={o.slug} value={o.slug}>
+            {/* Une marque en brouillon reste sélectionnable : on prépare ses
+                segments et ses tests avant de l'activer. */}
             {o.name}
+            {o.active ? "" : " (brouillon)"}
           </option>
         ))}
       </select>

@@ -60,6 +60,22 @@ retour chariot ni de chevron dans le nom : elles finissent dans un en-tête SMTP
 ⚠️ Le domaine de l'adresse d'envoi doit être **vérifié chez Resend**, sinon
 l'envoi échoue.
 
+### Catalogue : produits, formules, ou offre globale
+
+`products[]` alimente les tokens `{{product_*}}`. Trois réglages permettent de
+couvrir autre chose qu'un catalogue de produits physiques :
+
+| Champ | Effet |
+|---|---|
+| `price` (optionnel) | Une entrée « offre globale » n'a pas de prix ; `{{product_price}}` rend une chaîne vide. |
+| `uiLabel` (optionnel) | Libellé dans les menus et badges, quand il diffère du nom employé dans les phrases d'email. Ex. Horodo : `name: "Horodo"` (« Avec Horodo, le geste est capté ») et `uiLabel: "Général (offre complète)"` dans le sélecteur. |
+| `defaultProductKey` | Produit présélectionné à l'étape 1. Ne change pas le repli de `normalizeProductKey`, qui reste le premier du catalogue. |
+| `email.showProductsMore` | À `false`, l'encart « À découvrir aussi » disparaît et les routes de rédaction IA cessent de l'imposer. À utiliser quand le catalogue est une grille tarifaire : lister les paliers sous un email de prospection déplace la conversation sur le prix trop tôt. |
+
+Horodo combine les quatre : une entrée `general` sans prix en tête de catalogue
+(donc aussi le repli des valeurs inconnues), suivie des trois formules
+Starter / Pro / Entreprise.
+
 ### Webhook Resend : un seul endpoint
 
 Compte unique = tous les événements arrivent sur `POST /api/webhooks/resend`.

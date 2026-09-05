@@ -21,7 +21,7 @@ export async function POST(req: Request) {
   if (!instruction?.trim()) return fail("instruction requise.");
   if (!body?.trim() && !subject?.trim()) return fail("sujet ou corps requis.");
 
-  const brand = activeBrand(req);
+  const brand = await activeBrand(req);
   const prompt = `Tu es copywriter B2B pour ${brand.name}. On te donne un email de prospection EXISTANT (sujet + corps HTML) et une INSTRUCTION d'amélioration. Améliore l'email en suivant l'instruction, SANS le réécrire entièrement : conserve le sens, le ton et la structure globale, ne change que ce qui sert l'instruction.
 
 INSTRUCTION : ${instruction}

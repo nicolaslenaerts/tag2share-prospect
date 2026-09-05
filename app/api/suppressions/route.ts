@@ -19,7 +19,7 @@ export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const reason = searchParams.get("reason");
   const q = searchParams.get("q");
-  const brand = activeBrand(req);
+  const brand = await activeBrand(req);
   const scopes = [brand.slug, GLOBAL_SCOPE];
   const db = supabaseAdmin();
 
@@ -55,7 +55,7 @@ export async function POST(req: Request) {
     detail?: string;
   }>(req);
   if (!email || !email.includes("@")) return fail("Email valide requis.");
-  const brand = activeBrand(req);
+  const brand = await activeBrand(req);
   // Le périmètre (cette marque ou toutes) est décidé par suppressionScope().
   await addSuppression(
     email,
@@ -72,7 +72,7 @@ export async function POST(req: Request) {
 export async function DELETE(req: Request) {
   const { email } = await readJson<{ email: string }>(req);
   if (!email) return fail("email requis.");
-  const brand = activeBrand(req);
+  const brand = await activeBrand(req);
   await removeSuppression(email, brand.slug);
   return ok({ removed: normEmail(email) });
 }

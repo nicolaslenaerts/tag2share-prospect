@@ -25,7 +25,7 @@ export async function POST(req: Request) {
     product?: string;
   }>(req);
 
-  const brand = activeBrand(req);
+  const brand = await activeBrand(req);
   const n = Math.min(Math.max(count || 8, 3), 15);
   const zone = country || "Belgique";
   const p = getProduct(brand, product);

@@ -29,6 +29,10 @@ export const horodo: BrandConfig = {
     "Trouver les employeurs à main-d'œuvre de terrain qui doivent enregistrer le temps de travail",
   // Les deux domaines de la marque : seuls leurs liens reçoivent les UTM.
   domains: ["horodo.be", "horodo.eu"],
+  // Les liens de désinscription des emails Horodo sortent sur le domaine
+  // Horodo, pas sur celui de Tag2Share. Ce nom doit pointer sur le MÊME
+  // déploiement (la signature du lien est vérifiée par le serveur qui le reçoit).
+  appUrl: "https://marketing.horodo.be",
   theme: {
     rgb: [255, 176, 32], // amber-500 : fonds, bandeau, bouton
     textRgb: [154, 91, 0], // amber-700 : liens et texte sur fond clair
@@ -45,6 +49,11 @@ export const horodo: BrandConfig = {
     // PME, comptables) répond mieux à un email qui ressemble à un message écrit
     // qu'à une newsletter.
     layout: "minimal",
+    // Le catalogue d'Horodo est une grille de formules : lister les paliers
+    // sous un email de prospection déplace la conversation sur le prix bien
+    // trop tôt. L'encart « À découvrir aussi » est donc désactivé, et les
+    // routes de rédaction IA ne l'imposent plus.
+    showProductsMore: false,
     // Les quatre comptes existent (plan de publication organique) mais leurs
     // URL publiques ne figurent nulle part dans le dépôt : à compléter plutôt
     // qu'à deviner. Un tableau vide masque proprement la ligne dans l'email.
@@ -66,11 +75,31 @@ export const horodo: BrandConfig = {
     testEmailEnv: "TEST_EMAIL_HORODO",
   },
 
-  // Le « catalogue » d'Horodo, ce sont les trois formules d'abonnement.
+  // Présélection : l'offre globale. La prospection à froid parle du produit et
+  // du problème, pas du palier tarifaire ; les trois formules restent
+  // disponibles pour une campagne qui vise explicitement un segment de taille.
+  defaultProductKey: "general",
+
+  // Le catalogue mêle l'offre globale et les trois formules d'abonnement.
   // Prix mensuels hors TVA, par entreprise (pricing v4 du 30/08/2026).
   // configUrl pointe vers le diagnostic de conformité : en prospection à froid,
   // un diagnostic gratuit convertit mieux qu'une page de tarifs.
   products: [
+    {
+      key: "general",
+      // "Horodo" se lit dans une phrase (« Avec Horodo, le geste est capté »),
+      // "Général" se lit dans un menu déroulant. D'où les deux libellés.
+      name: "Horodo",
+      uiLabel: "Général (offre complète)",
+      // Pas de prix : cette entrée présente les fonctionnalités, pas un palier.
+      shopUrl: "https://www.horodo.be/produit",
+      configUrl: "https://www.horodo.be/diagnostic",
+      description:
+        "L'offre Horodo dans son ensemble, sans entrer dans les formules. Pointage par gsm, badge ou kiosque sur tablette. Journal en ajout seul : une correction s'ajoute, elle n'écrase jamais. Mode CIaO, entrée et sortie en temps réel par la personne elle-même. Fonctionnement hors réseau avec synchronisation au retour et origine de l'heure indiquée. Solde consultable par le travailleur à tout moment. Équipes, validation des heures, clôture de période. Feuille de temps par chantier ou par tâche. Règles par lieu et multi-sites. Compteurs par travailleur (flexi-job, temps partiel, travail de nuit). Accès en lecture seule pour le comptable ou le secrétariat social. Tableau de bord, rapports, et export destiné à l'inspection sociale.",
+      pitch:
+        "le temps de travail capté sur le terrain, hors réseau, et une trace que l'on peut produire devant un inspecteur.",
+      aliases: ["general", "général", "global", "offre complète", "complet"],
+    },
     {
       key: "starter",
       name: "Starter",
@@ -135,25 +164,21 @@ export const horodo: BrandConfig = {
 
 <p>Noter des heures n'est pourtant pas pouvoir les prouver. Un fichier se réécrit. Un encodage du vendredi n'est pas un enregistrement. Une saisie par le chef d'équipe n'est pas un pointage.</p>
 
-<p><strong>Horodo</strong> capte le geste au moment où il a lieu, même sans réseau, et en produit une trace vérifiable :</p>
+<p>Avec <strong>{{product_name}}</strong>, le geste est capté au moment où il a lieu, même sans réseau, et il en reste une trace vérifiable :</p>
 
 <ul style="padding-left:18px;">
   <li>L'heure vient du serveur, pas du téléphone.</li>
   <li>Une correction s'ajoute au journal, elle n'écrase jamais la ligne d'origine.</li>
-  <li>L'export s'ouvre sans compte et sans outil propriétaire.</li>
+  <li>Le travailleur voit son solde, et l'export s'ouvre sans compte ni outil propriétaire.</li>
 </ul>
 
-<p>Pour une structure comme {{name}}, la formule <strong>{{product_name}}</strong> est en général le bon point de départ.</p>
-
-${ctaButton("Voir les formules", "{{product_url}}", AMBER, INK)}
+${ctaButton("Découvrir {{product_name}}", "{{product_url}}", AMBER, INK)}
 
 <p style="text-align:center;margin:-8px 0 8px;">
   <a href="{{config_url}}">Faire le point en 3 minutes sur vos obligations actuelles</a>
 </p>
 
 <p>Si le sujet vous concerne, je peux vous montrer le parcours en quelques minutes cette semaine.</p>
-
-{{products_more}}
 
 <p style="margin-top:24px;">Bien à vous,<br/>
 <strong>L'équipe Horodo</strong><br/>

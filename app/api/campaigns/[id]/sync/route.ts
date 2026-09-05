@@ -14,7 +14,7 @@ type Ctx = { params: Promise<{ id: string }> };
 // Idempotent : peut être appelé à chaque ouverture de campagne.
 export async function POST(req: Request, { params }: Ctx) {
   const { id: campaignId } = await params;
-  const brand = activeBrand(req);
+  const brand = await activeBrand(req);
   const db = supabaseAdmin();
 
   const { data: campaign, error: cErr } = await db

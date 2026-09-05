@@ -10,7 +10,7 @@ import {
   slugify,
   requiredProspectFields,
 } from "@/lib/email";
-import { getProduct, normalizeProductKey } from "@/lib/products";
+import { getProduct, normalizeProductKey, productLabel } from "@/lib/products";
 import { useBrand } from "@/components/BrandProvider";
 import { brandColor, brandOnColor } from "@/lib/brands/types";
 
@@ -494,7 +494,8 @@ function CampaignEditor({
             <option value="">Auto (produit du segment de chaque prospect)</option>
             {brand.products.map((p) => (
               <option key={p.key} value={p.key}>
-                {p.name} ({p.price})
+                {productLabel(p)}
+                {p.price ? ` (${p.price})` : ""}
               </option>
             ))}
           </select>
@@ -655,7 +656,7 @@ function CampaignEditor({
       <TestSend
         campaignId={campaign.id}
         reqFields={reqFields}
-        products={testProducts.map((p) => ({ key: p.key, name: p.name }))}
+        products={testProducts.map((p) => ({ key: p.key, name: productLabel(p) }))}
         setMsg={setMsg}
       />
 
@@ -1147,7 +1148,7 @@ function RecipientRow({
         <td className="p-3 font-medium">
           {r.prospect.name}
           <div className="mt-0.5">
-            <Badge color="blue">{product.name}</Badge>
+            <Badge color="blue">{productLabel(product)}</Badge>
           </div>
         </td>
         <td className="p-3 text-gray-500">{r.to_email || r.prospect.email || "-"}</td>

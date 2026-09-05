@@ -19,7 +19,7 @@ export async function GET(req: Request) {
   const status = searchParams.get("status");
   const event = searchParams.get("event");
   const q = (searchParams.get("q") || "").trim();
-  const brand = activeBrand(req);
+  const brand = await activeBrand(req);
   const db = supabaseAdmin();
 
   const from = (page - 1) * PAGE_SIZE;

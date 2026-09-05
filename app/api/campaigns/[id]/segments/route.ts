@@ -11,7 +11,7 @@ export async function POST(req: Request, { params }: Ctx) {
   const { id: campaignId } = await params;
   const { segmentId } = await readJson<{ segmentId: string }>(req);
   if (!segmentId) return fail("segmentId requis.");
-  const brand = activeBrand(req);
+  const brand = await activeBrand(req);
   const db = supabaseAdmin();
 
   // La campagne ET le segment doivent appartenir à la marque active : sinon
@@ -47,7 +47,7 @@ export async function DELETE(req: Request, { params }: Ctx) {
   const { id: campaignId } = await params;
   const { segmentId } = await readJson<{ segmentId: string }>(req);
   if (!segmentId) return fail("segmentId requis.");
-  const brand = activeBrand(req);
+  const brand = await activeBrand(req);
   const db = supabaseAdmin();
   const { data: campaign } = await db
     .from("campaigns")

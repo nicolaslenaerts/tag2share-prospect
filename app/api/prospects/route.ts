@@ -19,7 +19,7 @@ export const runtime = "nodejs";
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const segmentId = searchParams.get("segmentId");
-  const brand = activeBrand(req);
+  const brand = await activeBrand(req);
   const db = supabaseAdmin();
 
   // Restriction optionnelle aux membres d'un segment.

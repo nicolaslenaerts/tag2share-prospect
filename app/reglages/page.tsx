@@ -8,7 +8,10 @@ export default function ReglagesPage() {
     <div className="mx-auto max-w-4xl px-4 py-8">
       <AppHeader
         subtitle="Réglages de la marque"
-        links={[{ href: "/", label: "← Prospection" }]}
+        links={[
+          { href: "/marques", label: "Marques" },
+          { href: "/", label: "← Prospection" },
+        ]}
       />
       <BrandSettings />
     </div>

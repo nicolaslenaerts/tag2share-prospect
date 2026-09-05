@@ -14,6 +14,10 @@ export const tag2share: BrandConfig = {
   tagline:
     "Trouver des business pour vos objets connectés (porte-clé, carte, présentoir)",
   domains: ["tag2share.com"],
+  // Domaine public de l'outil pour cette marque : il préfixe les liens de
+  // désinscription de ses emails. Historiquement porté par APP_URL, désormais
+  // déclaré ici pour que chaque marque ait le sien.
+  appUrl: "https://marketing.tag2share.com",
   theme: {
     rgb: [20, 74, 102],
     logoUrl:
@@ -23,6 +27,10 @@ export const tag2share: BrandConfig = {
     monogram: "T2",
   },
   shopUrl: "https://www.tag2share.com/shop/category/objets-connectes-9",
+  // Le présentoir est le plus vendeur en prospection à froid : c'est lui qui
+  // est proposé par défaut à l'étape 1 (le repli de normalizeProductKey reste
+  // le porte-clé, premier du catalogue, comme avant le multi-marque).
+  defaultProductKey: "stand",
 
   email: {
     layout: "classic",

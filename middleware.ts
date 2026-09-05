@@ -1,8 +1,11 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { AUTH_COOKIE, verifyToken } from "@/lib/auth";
-import { BRAND_COOKIE, BRAND_HEADER } from "@/lib/brand-context";
-import { DEFAULT_BRAND, findBrand } from "@/lib/brands";
+import { BRAND_COOKIE, BRAND_HEADER } from "@/lib/brand-cookie";
+// Validation de FORME uniquement : lib/brands/schema.ts n'a aucune dépendance
+// serveur, il peut donc être chargé par le runtime Edge (contrairement à
+// lib/brand-context.ts, qui lit la base).
+import { SLUG_RE } from "@/lib/brands/schema";
 
 /**
  * Protège l'ensemble de l'application par mot de passe partagé.
@@ -11,9 +14,9 @@ import { DEFAULT_BRAND, findBrand } from "@/lib/brands";
  *   - /api/webhooks/resend   (signature Resend)
  *   - /login + /api/auth/*   (parcours de connexion)
  *
- * Pose aussi l'en-tête `x-brand` (marque active, validée contre le registre)
- * pour que les routes API n'aient pas à re-parser le cookie et ne puissent pas
- * recevoir un slug arbitraire.
+ * Pose aussi l'en-tête `x-brand` d'après le cookie de préférence, pour que les
+ * routes API n'aient pas à re-parser le cookie et ne puissent pas recevoir un
+ * slug arbitraire depuis le réseau.
  */
 
 const PUBLIC_PREFIXES = ["/api/unsubscribe", "/api/webhooks/resend", "/login", "/api/auth"];
@@ -25,14 +28,25 @@ function isPublic(pathname: string): boolean {
 }
 
 /**
- * Poursuit la requête en injectant la marque active dans les en-têtes.
- * Un slug inconnu (marque retirée du registre) retombe sur la marque par
- * défaut plutôt que de casser la session.
+ * Poursuit la requête en injectant la marque demandée dans les en-têtes.
+ *
+ * Le middleware tourne sur le runtime Edge et ne peut pas interroger la base :
+ * depuis que des marques y sont créées, il ne peut plus valider le slug contre
+ * le registre. Il ne fait donc que deux choses, les seules qui relèvent de lui :
+ *   - refuser une valeur qui n'a pas la FORME d'un slug (un cookie est une
+ *     entrée non fiable, et cette valeur finit dans des requêtes SQL) ;
+ *   - retirer tout en-tête `x-brand` entrant, qui permettrait sinon de choisir
+ *     sa marque depuis le réseau.
+ *
+ * La validation réelle a lieu dans les handlers (lib/brand-context.ts), qui
+ * eux lisent le registre complet. En l'absence de cookie exploitable, aucun
+ * en-tête n'est posé : le handler peut alors déduire la marque du DOMAINE.
  */
 function nextWithBrand(req: NextRequest) {
-  const slug = findBrand(req.cookies.get(BRAND_COOKIE)?.value)?.slug ?? DEFAULT_BRAND.slug;
   const headers = new Headers(req.headers);
-  headers.set(BRAND_HEADER, slug);
+  headers.delete(BRAND_HEADER);
+  const cookie = req.cookies.get(BRAND_COOKIE)?.value?.trim().toLowerCase();
+  if (cookie && SLUG_RE.test(cookie)) headers.set(BRAND_HEADER, cookie);
   return NextResponse.next({ request: { headers } });
 }
 

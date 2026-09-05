@@ -1,7 +1,8 @@
 import { verify } from "@/lib/unsubscribe";
 import { addSuppression, normEmail } from "@/lib/suppression";
 import { supabaseAdmin } from "@/lib/supabase";
-import { DEFAULT_BRAND, getBrandOrDefault } from "@/lib/brands";
+import { DEFAULT_BRAND } from "@/lib/brands";
+import { resolveBrandOrDefault } from "@/lib/brands/store";
 import { brandColor, type BrandConfig } from "@/lib/brands/types";
 
 export const runtime = "nodejs";
@@ -55,10 +56,17 @@ async function unsubscribe(email: string, brand: BrandConfig) {
     .in("status", ["draft", "approved", "test_sent"]);
 }
 
-/** Marque du lien : paramètre `b`, sinon marque par défaut (anciens liens). */
-function linkBrand(searchParams: URLSearchParams): BrandConfig {
+/**
+ * Marque du lien : paramètre `b`, sinon marque par défaut (anciens liens).
+ *
+ * Repli tolérant assumé : une désinscription qui échoue est un risque de
+ * plainte spam. Un slug devenu inconnu affiche l'identité par défaut plutôt
+ * qu'une erreur - la vérification de signature, elle, reste stricte et refusera
+ * le lien si la marque ne correspond pas.
+ */
+async function linkBrand(searchParams: URLSearchParams): Promise<BrandConfig> {
   const slug = searchParams.get("b");
-  return slug ? getBrandOrDefault(slug) : DEFAULT_BRAND;
+  return slug ? resolveBrandOrDefault(slug) : DEFAULT_BRAND;
 }
 
 // Page de confirmation (clic depuis l'email).
@@ -66,7 +74,7 @@ export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const email = searchParams.get("e") || "";
   const token = searchParams.get("t") || "";
-  const brand = linkBrand(searchParams);
+  const brand = await linkBrand(searchParams);
   if (!verify(email, token, brand.slug)) {
     return page(
       brand,
@@ -88,7 +96,7 @@ export async function POST(req: Request) {
   const { searchParams } = new URL(req.url);
   const email = searchParams.get("e") || "";
   const token = searchParams.get("t") || "";
-  const brand = linkBrand(searchParams);
+  const brand = await linkBrand(searchParams);
   if (!verify(email, token, brand.slug)) {
     return new Response("invalid", { status: 400 });
   }

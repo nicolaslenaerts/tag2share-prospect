@@ -5,7 +5,7 @@ import { activeBrand } from "@/lib/brand-context";
 export const runtime = "nodejs";
 
 export async function GET(req: Request) {
-  const brand = activeBrand(req);
+  const brand = await activeBrand(req);
   const db = supabaseAdmin();
   const { data, error } = await db
     .from("campaigns")
@@ -33,7 +33,7 @@ export async function POST(req: Request) {
   if (!name) return fail("name requis.");
   if (segmentIds.length === 0)
     return fail("Au moins un segment requis (segment_ids).");
-  const brand = activeBrand(req);
+  const brand = await activeBrand(req);
   const db = supabaseAdmin();
 
   // Un segment d'une autre marque ne peut pas être ciblé : l'email serait

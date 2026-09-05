@@ -7,7 +7,7 @@ export const runtime = "nodejs";
 // Liste des segments de la marque active, avec le nombre total de prospects
 // rattachés (prospect_count).
 export async function GET(req: Request) {
-  const brand = activeBrand(req);
+  const brand = await activeBrand(req);
   const db = supabaseAdmin();
   const { data, error } = await db
     .from("segments")
@@ -39,7 +39,7 @@ export async function POST(req: Request) {
   if (!Array.isArray(segments) || segments.length === 0)
     return fail("Aucun segment fourni.");
 
-  const brand = activeBrand(req);
+  const brand = await activeBrand(req);
   const db = supabaseAdmin();
   const rows = segments.map((s) => ({
     brand: brand.slug,
@@ -62,7 +62,7 @@ export async function PATCH(req: Request) {
   // catalogue de sa marque, le déplacer rendrait la valeur orpheline.
   const { id, brand: _ignored, ...fields } = await readJson<any>(req);
   if (!id) return fail("id requis.");
-  const brand = activeBrand(req);
+  const brand = await activeBrand(req);
   const db = supabaseAdmin();
   const { data, error } = await db
     .from("segments")
@@ -79,7 +79,7 @@ export async function PATCH(req: Request) {
 export async function DELETE(req: Request) {
   const { id } = await readJson<{ id: string }>(req);
   if (!id) return fail("id requis.");
-  const brand = activeBrand(req);
+  const brand = await activeBrand(req);
   const db = supabaseAdmin();
   const { error } = await db
     .from("segments")

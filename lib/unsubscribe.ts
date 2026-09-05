@@ -16,6 +16,11 @@
 import crypto from "crypto";
 import { normEmail } from "./suppression";
 import { DEFAULT_BRAND } from "./brands";
+import type { BrandConfig } from "./brands/types";
+import { brandAppUrl } from "./public-url";
+
+// Réexporté pour ne pas casser les appelants historiques.
+export { appUrl, brandAppUrl, webhookUrl } from "./public-url";
 
 function secret(): string {
   return (
@@ -23,13 +28,6 @@ function secret(): string {
     process.env.SUPABASE_SERVICE_ROLE_KEY ||
     "dev-unsubscribe-secret"
   );
-}
-
-/** Base URL publique de l'app (pour des liens absolus dans les emails). */
-export function appUrl(): string {
-  const url =
-    process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
-  return url.replace(/\/+$/, "");
 }
 
 function hmac(payload: string): string {
@@ -67,9 +65,25 @@ export function verify(email: string, token: string, brandSlug: string): boolean
   return false;
 }
 
-/** URL de désinscription pour un destinataire d'une marque donnée. */
-export function unsubscribeUrl(email: string, brandSlug: string): string {
+/**
+ * URL de désinscription pour un destinataire d'une marque donnée, sur le
+ * domaine public de CETTE marque.
+ *
+ * Le paramètre `b` reste indispensable même quand le domaine identifie déjà la
+ * marque : deux marques peuvent partager un domaine, et la signature couvre
+ * le couple marque + adresse.
+ */
+export function unsubscribeUrl(
+  email: string,
+  brand: BrandConfig,
+  /**
+   * Base publique déjà résolue (voir publicBaseFor). À fournir depuis un route
+   * handler : elle tient compte du domaine par lequel la requête est arrivée,
+   * ce que cette fonction, purement synchrone, ne peut pas faire seule.
+   */
+  base?: string
+): string {
   const e = normEmail(email);
-  const params = new URLSearchParams({ e, b: brandSlug, t: sign(e, brandSlug) });
-  return `${appUrl()}/api/unsubscribe?${params.toString()}`;
+  const params = new URLSearchParams({ e, b: brand.slug, t: sign(e, brand.slug) });
+  return `${base || brandAppUrl(brand)}/api/unsubscribe?${params.toString()}`;
 }

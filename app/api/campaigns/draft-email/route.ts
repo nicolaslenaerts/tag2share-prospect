@@ -18,7 +18,8 @@ export async function POST(req: Request) {
     instruction?: string;
   }>(req);
 
-  const brand = activeBrand(req);
+  const brand = await activeBrand(req);
+  const showMore = brand.email.showProductsMore !== false;
   const cibles = (labels ?? []).filter(Boolean);
   const ciblesTxt = cibles.length
     ? `Types de business ciblés : ${cibles.join(", ")}.`
@@ -41,8 +42,11 @@ RÈGLES IMPÉRATIVES :${brandForbiddenBlock(brand)}
 - Inclus impérativement un BOUTON cliquable vers la page produit. Copie EXACTEMENT ce bouton :
   <table cellpadding="0" cellspacing="0" style="margin:20px auto;"><tr><td style="border-radius:8px;background:rgb(20,74,102);"><a href="{{product_url}}" style="display:inline-block;padding:14px 30px;color:#ffffff;text-decoration:none;font-weight:700;">Découvrir le {{product_name}}</a></td></tr></table>
 - Inclus un LIEN texte visible vers le configurateur : <a href="{{config_url}}">personnaliser votre {{product_name}}</a>.
-- Termine le corps par une ligne contenant EXACTEMENT le token {{products_more}}, juste avant la signature.
-- Le corps est du HTML simple (<p>, <ul>, <li>, <strong>, <a>). PAS de <html>/<body>/<style>.
+${
+    showMore
+      ? "- Termine le corps par une ligne contenant EXACTEMENT le token {{products_more}}, juste avant la signature.\n"
+      : "- N'ajoute AUCUN encart listant les autres produits ou formules, et n'emploie pas le token {{products_more}}.\n"
+  }- Le corps est du HTML simple (<p>, <ul>, <li>, <strong>, <a>). PAS de <html>/<body>/<style>.
 - N'utilise JAMAIS le tiret cadratin "—". N'indique AUCUN prix.
 - Ton chaleureux, concret, sans jargon. 130-200 mots. Termine par "${brand.ai.signature}".
 - Sujet court et accrocheur (max ~60 caractères), peut contenir {{name}}.
@@ -52,7 +56,11 @@ Réponds en JSON STRICT : {"subject": "...", "body": "<p>...</p>"}`;
   try {
     const data = await geminiJSON<{ subject: string; body: string }>(prompt);
     let body = data.body || "";
-    if (!body.includes("{{products_more}}")) body += "\n\n{{products_more}}";
+    if (showMore) {
+      if (!body.includes("{{products_more}}")) body += "\n\n{{products_more}}";
+    } else {
+      body = body.replace(/\{\{\s*products_more\s*\}\}/gi, "").trimEnd();
+    }
     return ok({ subject: data.subject, body });
   } catch (e) {
     return fail(`Erreur Gemini : ${(e as Error).message}`, 500);

@@ -5,9 +5,10 @@ import { sendEmail } from "@/lib/resend";
 import { suppressedSet, normEmail } from "@/lib/suppression";
 import { validateSendable } from "@/lib/email-validation";
 import { unsubscribeUrl } from "@/lib/unsubscribe";
+import { publicBaseFor } from "@/lib/public-url";
 import { logEmailSend } from "@/lib/email-log";
-import { activeBrand } from "@/lib/brand-context";
-import { getBrand } from "@/lib/brands";
+import { activeBrand, requireSendableBrand } from "@/lib/brand-context";
+
 import { brandSender } from "@/lib/brand-sender";
 import { resolveProspectSegments } from "@/lib/campaign-segments";
 
@@ -44,7 +45,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (!Array.isArray(recipientIds) || recipientIds.length === 0)
     return fail("recipientIds requis.");
 
-  const requestBrand = activeBrand(req);
+  const requestBrand = await activeBrand(req);
   const db = supabaseAdmin();
   const { data: campaign } = await db
     .from("campaigns")
@@ -54,15 +55,20 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     .single();
   if (!campaign) return fail("Campagne introuvable.", 404);
 
-  // Identité d'envoi = marque de la campagne, pas celle de la session.
+  // Identité d'envoi = marque de la campagne, pas celle de la session. Refus si
+  // la marque est encore en brouillon : c'est le dernier garde-fou avant que de
+  // vrais prospects reçoivent un email sous une identité non vérifiée.
   let brand;
   try {
-    brand = getBrand(campaign.brand);
+    brand = await requireSendableBrand(campaign.brand);
   } catch (e) {
-    return fail((e as Error).message, 500);
+    return fail((e as Error).message, 409);
   }
   // Identité d'expédition résolue UNE fois : elle reste figée pour tout le
   // lot, même si quelqu'un l'édite dans /reglages pendant l'envoi.
+  // Domaine public de la marque : l'app peut répondre sur plusieurs noms de
+  // domaine, le lien de désinscription doit sortir sur celui de la marque.
+  const publicBase = await publicBaseFor(brand, req);
   const sender = await brandSender(brand);
 
   const { data: recipients, error } = await db
@@ -178,7 +184,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }
 
     const segment = segmentByProspect.get(r.prospect_id) ?? null;
-    const unsub = unsubscribeUrl(to, brand.slug);
+    const unsub = unsubscribeUrl(to, brand, publicBase);
     const { subject, html } = buildRecipientEmail({
       brand,
       campaign,

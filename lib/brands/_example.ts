@@ -38,6 +38,9 @@ export const exemple: BrandConfig = {
   email: {
     // Gabarit distinct de Tag2Share : voir lib/email-layouts/.
     layout: "minimal",
+    // Mettre false si le catalogue est une grille de formules : l'encart
+    // « À découvrir aussi » listerait alors les paliers tarifaires.
+    // showProductsMore: false,
     socials: [{ label: "LinkedIn", url: "https://www.linkedin.com/company/exemple" }],
   },
 
@@ -58,7 +61,14 @@ export const exemple: BrandConfig = {
     delayMs: 1500,
   },
 
+  // Produit présélectionné à l'étape 1 (défaut : le premier du catalogue).
+  // defaultProductKey: "produit-a",
+
   products: [
+    // Pour une offre vendue globalement plutôt que par palier, ajouter en TÊTE
+    // une entrée sans `price`, avec un `uiLabel` distinct :
+    //   { key: "general", name: "Ma Marque", uiLabel: "Général (offre complète)", ... }
+    // Placée en premier, elle sert aussi de repli aux valeurs inconnues.
     {
       key: "produit-a",
       name: "Produit A",

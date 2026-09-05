@@ -10,7 +10,7 @@ export const maxDuration = 60;
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const segmentId = searchParams.get("segmentId");
-  const brand = activeBrand(req);
+  const brand = await activeBrand(req);
   const db = supabaseAdmin();
   let q = db
     .from("searches")
@@ -36,7 +36,7 @@ export async function POST(req: Request) {
   }>(req);
 
   if (!segmentId) return fail("segmentId requis.");
-  const brand = activeBrand(req);
+  const brand = await activeBrand(req);
   const db = supabaseAdmin();
 
   const { data: segment, error: segErr } = await db

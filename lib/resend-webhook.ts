@@ -23,7 +23,8 @@ import { supabaseAdmin } from "./supabase";
 import { addSuppression, type SuppressionReason } from "./suppression";
 import { recordEmailEvent } from "./email-log";
 import { brandSender, resendWebhookSecret, parseAddress } from "./brand-sender";
-import { BRANDS, DEFAULT_BRAND, findBrand } from "./brands";
+import { DEFAULT_BRAND } from "./brands";
+import { loadBrands, resolveBrand } from "./brands/store";
 import type { BrandConfig } from "./brands/types";
 
 /** Vérifie la signature Svix avec le secret commun. */
@@ -65,7 +66,7 @@ async function resolveEventBrand(
       .eq("resend_id", emailId)
       .limit(1)
       .maybeSingle();
-    const logged = findBrand(data?.brand);
+    const logged = await resolveBrand(data?.brand);
     if (logged) return logged;
   }
 
@@ -73,7 +74,7 @@ async function resolveEventBrand(
   const sender = typeof from === "string" ? parseAddress(from) : undefined;
   if (sender) {
     const target = sender.email.toLowerCase();
-    for (const brand of BRANDS) {
+    for (const brand of await loadBrands()) {
       const resolved = await brandSender(brand);
       if (resolved.fromEmail.toLowerCase() === target) return brand;
     }

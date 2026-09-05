@@ -13,7 +13,7 @@ export async function POST(req: Request, { params }: Ctx) {
   if (!Array.isArray(prospectIds) || prospectIds.length === 0)
     return fail("prospectIds requis.");
 
-  const brand = activeBrand(req);
+  const brand = await activeBrand(req);
   const db = supabaseAdmin();
   const { data: campaign } = await db
     .from("campaigns")
