@@ -22,6 +22,8 @@ type Prospect = {
   enrichment?: Enrichment | null;
   created_at?: string;
   status: string;
+  /** Origine : places (recherche Google) | csv (import de fichier) | manual. */
+  source?: string;
   segments?: SegmentRef[];
   emailed?: boolean;
   emailed_at?: string | null;
@@ -326,6 +328,7 @@ export function Prospects({ onNext }: { onNext: () => void }) {
   const [fEnriched, setFEnriched] = useState<"all" | "yes" | "no">("all");
   const [fEmail, setFEmail] = useState<"all" | "yes" | "no">("all");
   const [fWebsite, setFWebsite] = useState<"all" | "yes" | "no">("all");
+  const [fSource, setFSource] = useState<"all" | "places" | "csv">("all");
   // Segments sélectionnés pour le filtre (par id ; vide = tous).
   const [fSegments, setFSegments] = useState<Set<string>>(new Set());
   const [page, setPage] = useState(1);
@@ -370,6 +373,9 @@ export function Prospects({ onNext }: { onNext: () => void }) {
       const hasWebsite = !!(p.website && p.website.trim());
       if (fWebsite === "yes" && !hasWebsite) return false;
       if (fWebsite === "no" && hasWebsite) return false;
+      // `source` est absent tant que la migration 0014 n'est pas jouée : on
+      // considère alors tout le vivier comme issu de la recherche Places.
+      if (fSource !== "all" && (p.source ?? "places") !== fSource) return false;
       if (
         fSegments.size > 0 &&
         !(p.segments ?? []).some((s) => fSegments.has(s.id))
@@ -377,7 +383,7 @@ export function Prospects({ onNext }: { onNext: () => void }) {
         return false;
       return true;
     });
-  }, [list, fEnriched, fEmail, fWebsite, fSegments]);
+  }, [list, fEnriched, fEmail, fWebsite, fSource, fSegments]);
 
   const sorted = useMemo(() => {
     if (!sortKey) return filtered;
@@ -405,7 +411,7 @@ export function Prospects({ onNext }: { onNext: () => void }) {
   // Retour à la première page dès qu'un filtre, un tri ou la taille de page change.
   useEffect(() => {
     setPage(1);
-  }, [fEnriched, fEmail, fWebsite, fSegments, sortKey, sortDir, pageSize]);
+  }, [fEnriched, fEmail, fWebsite, fSource, fSegments, sortKey, sortDir, pageSize]);
 
   function toggleSort(key: SortKey) {
     if (sortKey === key) {
@@ -568,6 +574,16 @@ export function Prospects({ onNext }: { onNext: () => void }) {
               { key: "no", label: "Sans site" },
             ]}
           />
+          <PillGroup
+            label="Origine"
+            value={fSource}
+            onChange={setFSource}
+            options={[
+              { key: "all", label: "Toutes" },
+              { key: "places", label: "Recherche" },
+              { key: "csv", label: "Import" },
+            ]}
+          />
           {segmentOptions.length > 0 && (
             <div className="flex items-start gap-2">
               <span className="mt-1 text-xs font-medium text-gray-600">Segments :</span>
@@ -664,6 +680,9 @@ export function Prospects({ onNext }: { onNext: () => void }) {
                           <div className="font-semibold">{p.name}</div>
                           <div className="text-xs text-gray-400">
                             {[p.category, p.city, p.country].filter(Boolean).join(" · ")}
+                            {p.source === "csv" && (
+                              <span className="ml-1 text-gray-400">· importé</span>
+                            )}
                           </div>
                           {p.website && (
                             <a

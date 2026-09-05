@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { Button, Card, Input, Badge, Spinner } from "@/components/ui";
+import { ProspectImport } from "@/components/ProspectImport";
 
 type Segment = {
   id: string; label: string; product: string; search_terms: string[];
@@ -172,6 +173,14 @@ export function Search({ onNext }: { onNext: () => void }) {
           </ul>
         )}
       </Card>
+
+      <ProspectImport
+        segments={segments}
+        onDone={() => {
+          loadSegments();
+          loadHistory();
+        }}
+      />
     </div>
   );
 }

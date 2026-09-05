@@ -9,7 +9,7 @@ import { AppHeader } from "@/components/AppHeader";
 
 const STEPS = [
   { n: 1, label: "Types de business", hint: "L'IA propose · vous validez" },
-  { n: 2, label: "Recherche", hint: "Google Maps par pays" },
+  { n: 2, label: "Recherche & import", hint: "Google Maps · fichier CSV" },
   { n: 3, label: "Prospects", hint: "Enrichir · email, contact, logo" },
   { n: 4, label: "Campagne email", hint: "Réviser · tester · envoyer" },
 ];
