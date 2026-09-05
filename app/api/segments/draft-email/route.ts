@@ -2,6 +2,7 @@ import { geminiJSON } from "@/lib/gemini";
 import { getProduct } from "@/lib/products";
 import { ok, fail, readJson } from "@/lib/http";
 import { activeBrand } from "@/lib/brand-context";
+import { brandForbiddenBlock } from "@/lib/brands/types";
 
 export const runtime = "nodejs";
 
@@ -29,7 +30,7 @@ CIBLE : des "${label}".${rationale ? ` Contexte : ${rationale}.` : ""}
 PRODUIT MIS EN AVANT : ${p.name}. ${p.description}
 Angle : ${p.pitch}
 
-CONTRAINTES :
+CONTRAINTES :${brandForbiddenBlock(brand)}
 - N'utilise JAMAIS le caractère tiret cadratin "—". Emploie une virgule, un deux-points ou une parenthèse à la place.
 - N'indique AUCUN prix ni montant dans l'email.
 - Adapte tout le discours à CE produit et à CE type de business (bénéfices concrets pour eux).

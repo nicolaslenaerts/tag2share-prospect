@@ -21,10 +21,21 @@ export function slugify(text: string): string {
     .slice(0, 80);
 }
 
-/** Bouton CTA réutilisable (inline-block, email-safe). */
-export function ctaButton(label: string, href: string, color: string): string {
+/**
+ * Bouton CTA réutilisable (inline-block, email-safe).
+ * @param color   fond du bouton (couleur de signature de la marque)
+ * @param onColor couleur du libellé posé dessus ; blanc par défaut, mais une
+ *                marque claire doit passer son encre foncée sous peine d'un
+ *                bouton illisible.
+ */
+export function ctaButton(
+  label: string,
+  href: string,
+  color: string,
+  onColor: string = "#ffffff"
+): string {
   return `<table cellpadding="0" cellspacing="0" style="margin:24px auto;"><tr><td style="border-radius:8px;background:${color};">
-  <a href="${href}" style="display:inline-block;padding:14px 30px;color:#ffffff;text-decoration:none;font-weight:700;font-size:15px;">${label}</a>
+  <a href="${href}" style="display:inline-block;padding:14px 30px;color:${onColor};text-decoration:none;font-weight:700;font-size:15px;">${label}</a>
 </td></tr></table>`;
 }
 

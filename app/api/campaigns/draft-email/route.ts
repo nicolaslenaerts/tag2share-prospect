@@ -1,6 +1,7 @@
 import { geminiJSON } from "@/lib/gemini";
 import { ok, fail, readJson } from "@/lib/http";
 import { activeBrand } from "@/lib/brand-context";
+import { brandForbiddenBlock } from "@/lib/brands/types";
 import { productsPrompt } from "@/lib/products";
 
 export const runtime = "nodejs";
@@ -33,7 +34,7 @@ ${productsPrompt(brand)}
 ${ciblesTxt}
 ${instruction ? `Consigne supplémentaire : ${instruction}` : ""}
 
-RÈGLES IMPÉRATIVES :
+RÈGLES IMPÉRATIVES :${brandForbiddenBlock(brand)}
 - L'email est GÉNÉRIQUE : ne nomme PAS un produit en dur. Utilise les variables de fusion produit, qui seront remplacées par destinataire :
   {{product_name}} (nom du produit), {{product_url}} (page produit), {{config_url}} (configurateur).
 - Utilise aussi les variables : {{name}} (nom du business), {{contact_name}}, {{city}}.

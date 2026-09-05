@@ -261,7 +261,7 @@ function PillGroup<T extends string>({
             className={
               "rounded-full px-3 py-1 text-xs font-medium " +
               (value === o.key
-                ? "bg-brand text-white"
+                ? "bg-brand text-brand-fg"
                 : "bg-gray-100 text-gray-700 hover:bg-gray-200")
             }
           >
@@ -577,7 +577,7 @@ export function Prospects({ onNext }: { onNext: () => void }) {
                   onClick={() => setFSegments(new Set())}
                   className={`rounded-md px-2 py-1 text-xs font-medium transition ${
                     fSegments.size === 0
-                      ? "bg-brand text-white"
+                      ? "bg-brand text-brand-fg"
                       : "bg-gray-100 text-gray-600 hover:bg-gray-200"
                   }`}
                 >
@@ -592,7 +592,7 @@ export function Prospects({ onNext }: { onNext: () => void }) {
                       onClick={() => toggleSegment(s.id)}
                       className={`rounded-md px-2 py-1 text-xs font-medium transition ${
                         active
-                          ? "bg-brand text-white"
+                          ? "bg-brand text-brand-fg"
                           : "bg-gray-100 text-gray-600 hover:bg-gray-200"
                       }`}
                     >

@@ -1,6 +1,7 @@
 import { geminiJSON } from "@/lib/gemini";
 import { ok, fail, readJson } from "@/lib/http";
 import { activeBrand } from "@/lib/brand-context";
+import { brandForbiddenBlock } from "@/lib/brands/types";
 
 export const runtime = "nodejs";
 
@@ -25,7 +26,7 @@ export async function POST(req: Request) {
 
 INSTRUCTION : ${instruction}
 
-RÈGLES IMPÉRATIVES :
+RÈGLES IMPÉRATIVES :${brandForbiddenBlock(brand)}
 - Conserve TOUTES les variables de fusion telles quelles, à l'identique : {{name}}, {{contact_name}}, {{city}}, {{product_name}}, {{products_more}}, etc. N'en ajoute pas de nouvelles, n'en supprime aucune.
 - Conserve TOUS les liens et boutons HTML existants (balises <a>, tables de bouton) avec leurs URL EXACTES. Ne modifie pas les href.
 - Le corps reste du HTML simple (<p>, <ul>, <li>, <strong>, <a>). PAS de <html>/<body>/<style>.

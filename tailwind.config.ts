@@ -15,7 +15,7 @@ export default {
         // les marques. Les valeurs de repli vivent dans app/globals.css.
         brand: {
           DEFAULT: "rgb(var(--brand) / <alpha-value>)",
-          fg: "#FFFFFF",
+          fg: "var(--brand-fg)",
           50: "rgb(var(--brand-50) / <alpha-value>)",
           100: "rgb(var(--brand-100) / <alpha-value>)",
           600: "rgb(var(--brand) / <alpha-value>)",

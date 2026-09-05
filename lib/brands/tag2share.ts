@@ -117,7 +117,7 @@ export const tag2share: BrandConfig = {
 
 <p>Pour {{name}}, je recommande tout particulièrement le <strong>{{product_name}}</strong>.</p>
 
-${ctaButton("Voir le {{product_name}}", "{{product_url}}", COLOR)}
+${ctaButton("Voir le {{product_name}}", "{{product_url}}", COLOR, "#ffffff")}
 
 <p style="text-align:center;margin:-8px 0 8px;">
   <a href="{{config_url}}" style="color:${COLOR};font-weight:600;">🎨 Personnaliser votre {{product_name}} dans le configurateur →</a>

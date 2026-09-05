@@ -35,7 +35,7 @@ export default function Home() {
             className={cn(
               "rounded-lg border p-3 text-left transition",
               step === s.n
-                ? "border-brand bg-brand text-white"
+                ? "border-brand bg-brand text-brand-fg"
                 : "border-gray-200 bg-white hover:border-brand/50"
             )}
           >

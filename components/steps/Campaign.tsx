@@ -12,6 +12,7 @@ import {
 } from "@/lib/email";
 import { getProduct, normalizeProductKey } from "@/lib/products";
 import { useBrand } from "@/components/BrandProvider";
+import { brandColor, brandOnColor } from "@/lib/brands/types";
 
 type Segment = { id: string; label?: string; product?: string };
 type Campaign = {
@@ -620,8 +621,8 @@ function CampaignEditor({
           </div>
           {tagline.trim() && (
             <div
-              className="rounded-t border border-gray-100 px-3 py-2 text-center text-xs font-semibold text-white"
-              style={{ background: "rgb(20,74,102)" }}
+              className="rounded-t border border-gray-100 px-3 py-2 text-center text-xs font-semibold"
+              style={{ background: brandColor(brand), color: brandOnColor(brand) }}
             >
               {tagline}
             </div>

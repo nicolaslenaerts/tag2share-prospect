@@ -237,7 +237,7 @@ export function EmailLog() {
               className={
                 "rounded-full px-3 py-1 text-xs font-medium " +
                 (status === f.key
-                  ? "bg-brand text-white"
+                  ? "bg-brand text-brand-fg"
                   : "bg-gray-100 text-gray-700 hover:bg-gray-200")
               }
             >

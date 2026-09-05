@@ -3,11 +3,13 @@
  * pied avec réseaux sociaux. C'est le gabarit historique Tag2Share, rendu
  * paramétrable par marque (couleur, logo, accroche, réseaux, identité).
  */
-import { brandColor } from "../brands/types";
+import { brandColor, brandOnColor, brandTextColor } from "../brands/types";
 import type { EmailLayout } from "./types";
 
 export const classic: EmailLayout = (brand, bodyHtml, opts) => {
-  const color = brandColor(brand);
+  const color = brandColor(brand); // fonds : bandeau
+  const onColor = brandOnColor(brand); // texte posé sur le bandeau
+  const textColor = brandTextColor(brand); // liens, lisibles sur fond clair
   const logo = opts?.logoUrl || brand.theme.logoUrl;
   const tagline = opts?.tagline == null ? brand.defaults.tagline : opts.tagline;
   const id = brand.sender.identity;
@@ -20,7 +22,7 @@ export const classic: EmailLayout = (brand, bodyHtml, opts) => {
     : "";
   const taglineRow = tagline.trim()
     ? `<tr><td style="background:${color};padding:14px 30px;text-align:center;">
-          <p style="margin:0;color:#ffffff;font-size:14px;font-weight:600;letter-spacing:0.3px;">
+          <p style="margin:0;color:${onColor};font-size:14px;font-weight:600;letter-spacing:0.3px;">
             ${tagline}
           </p>
         </td></tr>`
@@ -28,7 +30,7 @@ export const classic: EmailLayout = (brand, bodyHtml, opts) => {
   const socials = brand.email.socials
     .map(
       (s) =>
-        `<a href="${s.url}" style="color:${color};font-weight:600;text-decoration:none;">${s.label}</a>`
+        `<a href="${s.url}" style="color:${textColor};font-weight:600;text-decoration:none;">${s.label}</a>`
     )
     .join(`\n            <span style="color:#cccccc;">&nbsp;·&nbsp;</span>\n            `);
   const socialsRow = socials

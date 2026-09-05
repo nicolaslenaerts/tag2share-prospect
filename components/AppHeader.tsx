@@ -18,7 +18,7 @@ export function AppHeader({
   const brand = useBrand();
   return (
     <header className="mb-8 flex flex-wrap items-center gap-3">
-      <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-brand font-bold text-white">
+      <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-brand font-bold text-brand-fg">
         {brand.theme.monogram}
       </div>
       <div>

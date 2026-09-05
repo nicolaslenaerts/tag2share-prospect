@@ -6,11 +6,12 @@
  */
 import type { BrandConfig } from "./types";
 import { tag2share } from "./tag2share";
+import { horodo } from "./horodo";
 
 export * from "./types";
 
 /** Toutes les marques gérées par l'outil, dans l'ordre d'affichage. */
-export const BRANDS: BrandConfig[] = [tag2share];
+export const BRANDS: BrandConfig[] = [tag2share, horodo];
 
 /** Marque utilisée quand la requête n'en précise aucune (rétro-compatibilité). */
 export const DEFAULT_BRAND: BrandConfig = BRANDS[0];

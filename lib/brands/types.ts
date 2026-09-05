@@ -38,8 +38,23 @@ export type EmailLayoutKey = "classic" | "minimal";
 export type SocialLink = { label: string; url: string };
 
 export type BrandTheme = {
-  /** Couleur de marque en composantes RVB : sert à la fois aux emails et à l'UI. */
+  /**
+   * Couleur de SIGNATURE, en composantes RVB : fonds de bouton, bandeau,
+   * filets. C'est la couleur que la marque revendique.
+   */
   rgb: [number, number, number];
+  /**
+   * Variante lisible EN TEXTE sur fond clair (liens, accents typographiques).
+   * Par défaut, la couleur de signature - ce qui convient aux marques sombres.
+   * Une marque claire (ambre, jaune, cyan) DOIT en fournir une : sa couleur de
+   * signature en texte sur blanc tombe sous le seuil de contraste lisible.
+   */
+  textRgb?: [number, number, number];
+  /**
+   * Couleur du texte POSÉ SUR la couleur de signature (libellé de bouton,
+   * bandeau). Par défaut blanc ; une marque claire y met son encre foncée.
+   */
+  onBrandHex?: string;
   logoUrl: string;
   /** Texte alternatif du logo dans l'email. */
   logoAlt: string;
@@ -87,6 +102,13 @@ export type BrandAi = {
   positioning: string;
   /** Signature imposée en fin d'email (ex. "L'équipe Tag2Share"). */
   signature: string;
+  /**
+   * Formulations INTERDITES, reprises telles quelles dans les prompts.
+   * Indispensable pour une marque en secteur réglementé : une allégation de
+   * conformité ou de certification inventée par l'IA dans un email de
+   * prospection engage la responsabilité de l'entreprise.
+   */
+  forbidden?: string[];
 };
 
 export type BrandConfig = {
@@ -116,10 +138,33 @@ export type BrandConfig = {
   ai: BrandAi;
 };
 
-/** Couleur de marque au format CSS `rgb(r,g,b)` (emails : pas de variable CSS possible). */
+/**
+ * Bloc d'interdits à insérer dans un prompt. Chaîne vide si la marque n'en
+ * déclare aucun, pour ne pas polluer le prompt.
+ */
+export function brandForbiddenBlock(brand: BrandConfig): string {
+  const list = brand.ai.forbidden ?? [];
+  if (list.length === 0) return "";
+  return `\nINTERDITS DE COMMUNICATION - ne jamais employer, sous aucune forme, même reformulée :\n${list
+    .map((f) => `- ${f}`)
+    .join("\n")}\n`;
+}
+
+/** Couleur de signature au format CSS `rgb(r,g,b)` (emails : pas de variable CSS possible). */
 export function brandColor(brand: BrandConfig): string {
   const [r, g, b] = brand.theme.rgb;
   return `rgb(${r},${g},${b})`;
+}
+
+/** Couleur de marque utilisable en TEXTE sur fond clair (liens, accents). */
+export function brandTextColor(brand: BrandConfig): string {
+  const [r, g, b] = brand.theme.textRgb ?? brand.theme.rgb;
+  return `rgb(${r},${g},${b})`;
+}
+
+/** Couleur du texte posé SUR la couleur de signature. */
+export function brandOnColor(brand: BrandConfig): string {
+  return brand.theme.onBrandHex ?? "#ffffff";
 }
 
 /** Triplet `"r g b"` pour la variable CSS --brand consommée par Tailwind. */

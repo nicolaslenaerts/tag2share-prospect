@@ -2,6 +2,7 @@ import { geminiJSON } from "@/lib/gemini";
 import { getProduct } from "@/lib/products";
 import { ok, fail, readJson } from "@/lib/http";
 import { activeBrand } from "@/lib/brand-context";
+import { brandForbiddenBlock } from "@/lib/brands/types";
 
 export const runtime = "nodejs";
 
@@ -32,7 +33,7 @@ export async function POST(req: Request) {
   const prompt = `Tu es expert en prospection B2B pour ${brand.name}.
 
 ${brand.ai.positioning}
-
+${brandForbiddenBlock(brand)}
 Produit à vendre : ${p.name} (${p.price}).
 ${p.description}
 Angle : ${p.pitch}

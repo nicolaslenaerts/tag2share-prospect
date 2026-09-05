@@ -35,12 +35,18 @@ const triplet = (rgb: Rgb) => rgb.join(" ");
  */
 export function brandCssVars(brand: BrandConfig): Record<string, string> {
   const base = brand.theme.rgb;
+  // Les tons foncés servent de TEXTE (titres, messages, survols) : ils sont
+  // dérivés de la variante lisible, pas de la couleur de signature. Pour une
+  // marque sombre les deux coïncident ; pour une marque claire (ambre), dériver
+  // de la signature donnerait un texte illisible.
+  const text = brand.theme.textRgb ?? base;
   return {
     "--brand": triplet(base),
+    "--brand-fg": brand.theme.onBrandHex ?? "#ffffff",
     "--brand-50": triplet(tint(base, 0.07)),
     "--brand-100": triplet(tint(base, 0.18)),
-    "--brand-700": triplet(shade(base, 0.8)),
-    "--brand-900": triplet(shade(base, 0.55)),
+    "--brand-700": triplet(shade(text, 0.8)),
+    "--brand-900": triplet(shade(text, 0.55)),
   };
 }
 

@@ -9,7 +9,7 @@
  */
 
 import { getProduct, otherProducts } from "./products";
-import { brandColor, type BrandConfig } from "./brands/types";
+import { brandColor, brandTextColor, type BrandConfig } from "./brands/types";
 import { renderLayout } from "./email-layouts";
 import { noEmDash, enhanceLinks, slugify, ctaButton } from "./email-html";
 
@@ -109,7 +109,9 @@ export function productsMoreBlock(
   brand: BrandConfig,
   featuredKey?: string | null
 ): string {
-  const color = brandColor(brand);
+  // Liens et titre en couleur de TEXTE (lisible), filet en couleur de signature.
+  const color = brandTextColor(brand);
+  const accent = brandColor(brand);
   const others = otherProducts(brand, featuredKey);
   if (others.length === 0) return "";
   const items = others
@@ -118,7 +120,7 @@ export function productsMoreBlock(
         `<li style="margin-bottom:6px;"><a href="${p.shopUrl}" style="color:${color};font-weight:600;text-decoration:underline;">${p.name}</a> - ${p.pitch}</li>`
     )
     .join("");
-  return `<div style="margin-top:24px;padding:16px 18px;background:#f1f5f8;border-radius:8px;border-left:3px solid ${color};">
+  return `<div style="margin-top:24px;padding:16px 18px;background:#f1f5f8;border-radius:8px;border-left:3px solid ${accent};">
   <p style="margin:0 0 8px;font-weight:700;color:${color};">À découvrir aussi 👀</p>
   <ul style="margin:0;padding-left:18px;color:#374151;font-size:14px;">${items}</ul>
 </div>`;
@@ -262,7 +264,7 @@ export function buildRecipientEmail(args: {
     renderLayout(
       brand,
       addUtmToLinks(
-        enhanceLinks(renderMerge(bodyTpl, data), brandColor(brand)),
+        enhanceLinks(renderMerge(bodyTpl, data), brandTextColor(brand)),
         utm,
         brand
       ),

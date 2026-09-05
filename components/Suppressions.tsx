@@ -105,7 +105,7 @@ export function Suppressions() {
               onClick={() => setReason(f.key)}
               className={
                 "rounded-full px-3 py-1 text-xs font-medium " +
-                (reason === f.key ? "bg-brand text-white" : "bg-gray-100 text-gray-700 hover:bg-gray-200")
+                (reason === f.key ? "bg-brand text-brand-fg" : "bg-gray-100 text-gray-700 hover:bg-gray-200")
               }
             >
               {f.label}
