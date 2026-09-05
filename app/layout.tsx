@@ -3,7 +3,7 @@ import { cookies, headers } from "next/headers";
 import "./globals.css";
 import { BrandProvider } from "@/components/BrandProvider";
 import { BRAND_COOKIE } from "@/lib/brand-cookie";
-import { DEFAULT_BRAND } from "@/lib/brands";
+import { DEFAULT_BRAND_SLUG } from "@/lib/brands";
 import { normalizeDomain } from "@/lib/brands/schema";
 import { brandOptions, loadBrandRecords, type BrandRecord } from "@/lib/brands/store";
 import { brandStyleAttr } from "@/lib/brands/theme";
@@ -31,14 +31,17 @@ async function currentBrand(): Promise<BrandRecord> {
     ? records.find((r) => r.brand.appUrl && normalizeDomain(r.brand.appUrl) === host)
     : undefined;
 
-  return (
-    byHost ??
-    records.find((r) => r.brand.slug === DEFAULT_BRAND.slug) ?? {
-      brand: DEFAULT_BRAND,
-      source: "code",
-      active: true,
-    }
-  );
+  const fallback =
+    byHost ?? records.find((r) => r.brand.slug === DEFAULT_BRAND_SLUG) ?? records[0];
+  if (!fallback) {
+    // Le repli sur les configurations d'origine rend ce cas très improbable.
+    // Le taire rendrait une page sans identité de marque du tout, ce qui est
+    // pire qu'un échec net.
+    throw new Error(
+      "Aucune marque disponible : vérifier la table `brands` et la connexion Supabase."
+    );
+  }
+  return fallback;
 }
 
 export async function generateMetadata(): Promise<Metadata> {

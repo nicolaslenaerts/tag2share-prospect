@@ -1,19 +1,23 @@
 /**
- * GABARIT pour ajouter une marque. Ce fichier n'est PAS enregistré dans le
- * registre (lib/brands/index.ts) : il ne peut donc rien envoyer. Il est
- * néanmoins vérifié par TypeScript, donc il reste toujours valide.
+ * GABARIT de marque, conservé comme RÉFÉRENCE DE FORME.
  *
- * Pour créer une marque :
- *   1. Copier ce fichier en lib/brands/<slug>.ts et renommer la constante.
- *   2. Remplir identité, domaines, catalogue, positionnement IA, contenu par défaut.
- *   3. L'ajouter au tableau BRANDS dans lib/brands/index.ts.
- *   4. Déclarer les variables d'environnement nommées ci-dessous (clé Resend,
- *      secret de webhook, adresse de test).
- *   5. Vérifier le domaine d'envoi chez Resend et y enregistrer le webhook
- *      https://<APP_URL>/api/webhooks/resend/<slug>
+ * ⚠️ Ce n'est plus le chemin normal. Depuis la migration 0013, une marque se
+ * crée dans l'interface : /marques → « Nouvelle marque ». Elle est validée,
+ * stockée en base et modifiable sans redéploiement, et elle naît en brouillon
+ * (aucun envoi réel avant activation explicite).
+ *
+ * Ce fichier reste utile pour deux choses :
+ *   - lire, avec l'aide de TypeScript, ce que contient un BrandConfig ;
+ *   - déclarer une marque que l'on veut délibérément soustraire à l'interface,
+ *     en l'ajoutant au tableau BRANDS de lib/brands/index.ts. Elle prendra
+ *     alors le pas sur toute ligne de base du même slug.
+ *
+ * Restent à faire à la main, dans les deux cas : vérifier le domaine d'envoi
+ * chez Resend, et y enregistrer le webhook <URL publique>/api/webhooks/resend.
  *
  * Rappel : ce fichier est importé côté navigateur (aperçu d'email). Aucun
- * secret, aucune lecture de process.env - seulement des NOMS de variables.
+ * secret, aucune lecture de process.env - seulement des NOMS de variables,
+ * lesquels ne sont d'ailleurs PAS repris pour une marque stockée en base.
  */
 import { ctaButton } from "../email-html";
 import type { BrandConfig } from "./types";

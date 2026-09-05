@@ -23,14 +23,15 @@ import { normalizeDomain } from "./schema";
 
 /**
  * Ce que l'on sait de l'identité d'expédition EFFECTIVE (résolue par
- * lib/brand-sender.ts : base → env → code).
+ * lib/brand-sender.ts : surcharge héritée → variable d'environnement →
+ * configuration de la marque).
  */
 export type SenderFacts = {
   fromEmail: string;
   replyTo: string;
   testEmail?: string;
   /** D'où vient l'adresse d'envoi retenue. */
-  fromSource: "settings" | "env" | "code";
+  fromSource: "settings" | "env" | "config";
 };
 
 export type Readiness = {
@@ -73,18 +74,26 @@ export function brandReadiness(brand: BrandConfig, sender?: SenderFacts): Readin
   }
 
   if (sender) {
-    // Le vrai garde-fou. Le défaut du code d'une marque créée dans l'interface
-    // n'est qu'un texte saisi dans un formulaire : rien ne garantit que ce
-    // domaine soit vérifié chez Resend. Exiger une saisie dans /reglages force
-    // le passage par l'écran qui le rappelle.
-    if (sender.fromSource !== "settings") {
-      blockers.push(
-        "L'adresse d'envoi n'a pas été confirmée dans Réglages. Le domaine doit y être saisi une fois vérifié chez Resend."
-      );
-    }
+    // Une adresse de test est exigée : c'est le seul moyen de voir l'email tel
+    // qu'il partira, et de constater qu'un domaine non vérifié chez Resend fait
+    // échouer l'envoi, AVANT d'écrire à de vrais prospects.
     if (!sender.testEmail) {
       blockers.push(
-        "Aucune adresse de test : renseignez-la dans Réglages et envoyez-vous un email avant d'écrire à de vrais prospects."
+        "Aucune adresse de test : renseignez-la dans l'expédition de la marque et envoyez-vous un email avant d'écrire à de vrais prospects."
+      );
+    }
+
+    // Une surcharge héritée de l'ancien écran Réglages prime sur tout ce qui est
+    // saisi ici. Elle n'est pas une erreur, mais tant qu'elle existe l'éditeur
+    // ne montre pas ce qui partira réellement : il faut le dire.
+    if (sender.fromSource === "settings") {
+      warnings.push(
+        `Une surcharge d'expédition enregistrée prime sur la configuration de la marque : les emails partiront de ${sender.fromEmail}.`
+      );
+    }
+    if (sender.fromSource === "env") {
+      warnings.push(
+        `Une variable d'environnement impose l'adresse d'envoi (${sender.fromEmail}) : le champ saisi ici est ignoré tant qu'elle est définie.`
       );
     }
 

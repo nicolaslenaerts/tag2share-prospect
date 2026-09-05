@@ -314,8 +314,8 @@ function parseProducts(c: Collector, v: unknown): Product[] {
       ...(optStr(o.price) ? { price: optStr(o.price)! } : {}),
       shopUrl: url(c, o.shopUrl, `${p}.shopUrl`, `L'adresse boutique du produit n°${i + 1}`),
       configUrl: url(c, o.configUrl, `${p}.configUrl`, `L'adresse de configuration du produit n°${i + 1}`),
-      description: str(c, o.description, `${p}.description`, `La description du produit n°${i + 1}`, { max: 600 }),
-      pitch: str(c, o.pitch, `${p}.pitch`, `L'accroche du produit n°${i + 1}`, { max: 300 }),
+      description: str(c, o.description, `${p}.description`, `La description du produit n°${i + 1}`, { max: 2000 }),
+      pitch: str(c, o.pitch, `${p}.pitch`, `L'accroche du produit n°${i + 1}`, { max: 500 }),
       ...(strList(o.aliases, 20).length ? { aliases: strList(o.aliases, 20) } : {}),
     };
   });
@@ -323,6 +323,11 @@ function parseProducts(c: Collector, v: unknown): Product[] {
 
 /* ------------------------------------------------------------------ */
 /* Entrée principale                                                   */
+/*                                                                     */
+/* Les longueurs maximales bornent la taille des prompts IA et des     */
+/* en-têtes d'email ; elles ne sont pas une règle métier. Les élargir  */
+/* est sans risque, les descendre sous une valeur déjà en production   */
+/* rendrait une marque existante irrécupérable.                        */
 /* ------------------------------------------------------------------ */
 
 /**
@@ -412,7 +417,7 @@ export function parseBrandConfig(input: unknown): ParseResult {
     products,
     ...(defaultProductKey ? { defaultProductKey } : {}),
     ai: {
-      positioning: str(c, aiRaw.positioning, "ai.positioning", "Le positionnement pour l'IA", { max: 1200 }),
+      positioning: str(c, aiRaw.positioning, "ai.positioning", "Le positionnement pour l'IA", { max: 4000 }),
       signature: str(c, aiRaw.signature, "ai.signature", "La signature d'email", { max: 120 }),
       ...(strList(aiRaw.forbidden, 40).length ? { forbidden: strList(aiRaw.forbidden, 40) } : {}),
     },

@@ -19,8 +19,8 @@
  * désactivée au profit de la clé service_role) : toute requête qui lit ou écrit
  * des données de marque doit filtrer explicitement sur la colonne `brand`.
  */
-import { DEFAULT_BRAND } from "./brands";
 import {
+  defaultBrand,
   findBrandRecord,
   loadBrandRecords,
   resolveBrandOrDefault,
@@ -85,7 +85,7 @@ export async function activeBrand(req: Request): Promise<BrandConfig> {
     const found = await findBrandRecord(slug);
     if (found) return found.brand;
   }
-  return (await brandForHost(req)) ?? DEFAULT_BRAND;
+  return (await brandForHost(req)) ?? (await defaultBrand());
 }
 
 /**
@@ -94,7 +94,7 @@ export async function activeBrand(req: Request): Promise<BrandConfig> {
  */
 export async function requireBrand(req: Request): Promise<BrandConfig> {
   const slug = requestedBrandSlug(req);
-  if (!slug) return (await brandForHost(req)) ?? DEFAULT_BRAND;
+  if (!slug) return (await brandForHost(req)) ?? (await defaultBrand());
   const brand = await resolveBrandOrDefault(slug);
   if (brand.slug !== slug) throw new Error(`Marque inconnue : "${slug}".`);
   return brand;

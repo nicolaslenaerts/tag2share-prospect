@@ -1,19 +1,15 @@
-import { BrandSettings } from "@/components/BrandSettings";
-import { AppHeader } from "@/components/AppHeader";
+import { redirect } from "next/navigation";
 
-export const metadata = { title: "Réglages de la marque" };
-
+/**
+ * L'identité d'expédition se saisissait ici, dans une table séparée qui
+ * primait sur la configuration de la marque. Depuis que celle-ci vit en base
+ * et s'édite dans /marques, les deux écrans se contredisaient : on pouvait
+ * saisir une adresse d'envoi sans effet, masquée par l'autre.
+ *
+ * Tout est désormais dans la fiche de la marque, qui affiche aussi ce qui
+ * s'appliquera réellement et permet de lever une surcharge héritée. Cette
+ * redirection garde les liens et les signets existants opérants.
+ */
 export default function ReglagesPage() {
-  return (
-    <div className="mx-auto max-w-4xl px-4 py-8">
-      <AppHeader
-        subtitle="Réglages de la marque"
-        links={[
-          { href: "/marques", label: "Marques" },
-          { href: "/", label: "← Prospection" },
-        ]}
-      />
-      <BrandSettings />
-    </div>
-  );
+  redirect("/marques");
 }

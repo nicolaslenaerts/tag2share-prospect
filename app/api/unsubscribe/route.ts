@@ -1,7 +1,6 @@
 import { verify } from "@/lib/unsubscribe";
 import { addSuppression, normEmail } from "@/lib/suppression";
 import { supabaseAdmin } from "@/lib/supabase";
-import { DEFAULT_BRAND } from "@/lib/brands";
 import { resolveBrandOrDefault } from "@/lib/brands/store";
 import { brandColor, type BrandConfig } from "@/lib/brands/types";
 
@@ -65,8 +64,7 @@ async function unsubscribe(email: string, brand: BrandConfig) {
  * le lien si la marque ne correspond pas.
  */
 async function linkBrand(searchParams: URLSearchParams): Promise<BrandConfig> {
-  const slug = searchParams.get("b");
-  return slug ? resolveBrandOrDefault(slug) : DEFAULT_BRAND;
+  return resolveBrandOrDefault(searchParams.get("b"));
 }
 
 // Page de confirmation (clic depuis l'email).

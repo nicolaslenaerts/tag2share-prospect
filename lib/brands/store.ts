@@ -1,22 +1,27 @@
 /**
- * Registre EFFECTIF des marques : celles déclarées en code + celles créées
- * dans l'interface (table `brands`, migration 0012).
+ * Registre EFFECTIF des marques. La BASE fait foi (table `brands`).
  *
- * Pourquoi deux origines. Les marques en code (lib/brands/<slug>.ts) sont
- * versionnées, relues en revue et ne peuvent pas être cassées par une fausse
- * manœuvre dans un formulaire : les marques de production y restent. Les
- * marques créées dans l'interface vivent en base et sont modifiables sans
- * redéploiement. Le code GAGNE toujours : un slug déjà pris par une marque en
- * code est refusé à l'écriture, et une ligne de base qui aurait ce slug est
- * ignorée à la lecture. Sans cette règle, une ligne de base pourrait détourner
- * l'identité d'envoi d'une marque de production.
+ * Trois provenances possibles, dans cet ordre :
+ *
+ *  1. Les lignes de la table. C'est le cas normal depuis la migration 0013 :
+ *     toutes les marques, Tag2Share et Horodo comprises, y vivent et se
+ *     modifient dans /marques.
+ *
+ *  2. Le tableau BRANDS de lib/brands/index.ts, VIDE aujourd'hui. Une marque
+ *     qui y figurerait aurait autorité sur la ligne de base du même slug, qui
+ *     serait alors ignorée à la lecture et refusée à l'écriture. Réservé au cas
+ *     où l'on voudrait délibérément soustraire une marque à l'interface.
+ *
+ *  3. Les configurations d'origine (SEED_BRANDS), UNIQUEMENT si la base ne
+ *     fournit aucune marque. Canot de sauvetage, jamais un mélange : voir
+ *     seedRecords.
  *
  * ⚠️ Module SERVEUR (Supabase) : ne jamais l'importer depuis un composant
  * client. Les composants clients reçoivent la marque déjà résolue, sérialisée
  * par app/layout.tsx.
  */
 import { supabaseAdmin } from "../supabase";
-import { BRANDS, DEFAULT_BRAND } from "./index";
+import { BRANDS, DEFAULT_BRAND_SLUG, SEED_BRANDS } from "./index";
 import { formatErrors, parseBrandConfig, SLUG_RE, type FieldError } from "./schema";
 import type { BrandConfig } from "./types";
 
@@ -25,7 +30,7 @@ export type BrandSource = "code" | "db";
 export type BrandRecord = {
   brand: BrandConfig;
   source: BrandSource;
-  /** Autorisation d'ENVOI RÉEL. Les marques en code sont actives d'office. */
+  /** Autorisation d'ENVOI RÉEL. Une marque venue du code est active d'office. */
   active: boolean;
   updatedAt?: string;
 };
@@ -87,8 +92,32 @@ export function invalidateBrandCache(): void {
 /* Lecture                                                             */
 /* ------------------------------------------------------------------ */
 
-const codeRecords = (): BrandRecord[] =>
-  BRANDS.map((brand) => ({ brand, source: "code" as const, active: true }));
+const asRecords = (brands: BrandConfig[]): BrandRecord[] =>
+  brands.map((brand) => ({ brand, source: "code" as const, active: true }));
+
+let warnedSeed = false;
+
+/**
+ * Registre de secours, quand la base ne fournit AUCUNE marque : table absente,
+ * variables Supabase manquantes, ou table vide avant la migration 0013.
+ *
+ * Ce repli ne s'applique jamais quand des lignes existent, même invalides.
+ * Substituer les configurations d'origine à des lignes que quelqu'un vient de
+ * modifier ferait partir des emails sous une identité que l'opérateur croyait
+ * avoir changée : mieux vaut une marque manquante et bruyante qu'une marque
+ * silencieusement périmée.
+ */
+function seedRecords(reason: string): BrandRecord[] {
+  if (!warnedSeed) {
+    warnedSeed = true;
+    console.warn(
+      `Aucune marque en base (${reason}) : repli sur les configurations d'origine ` +
+        "de lib/brands/. Elles sont en lecture seule et ne reflètent pas les " +
+        "modifications faites dans /marques."
+    );
+  }
+  return asRecords(SEED_BRANDS);
+}
 
 async function fetchRows(): Promise<BrandRow[] | null> {
   let db: ReturnType<typeof supabaseAdmin>;
@@ -126,8 +155,8 @@ async function fetchRows(): Promise<BrandRow[] | null> {
 }
 
 /**
- * Registre complet, marques en code d'abord (l'ordre pilote l'affichage du
- * sélecteur, et la marque par défaut doit rester en tête).
+ * Registre complet, marques en code d'abord, puis les lignes de base dans leur
+ * ordre de création (cet ordre pilote l'affichage du sélecteur).
  *
  * Une ligne de base illisible est ÉCARTÉE plutôt que de faire échouer tout le
  * registre : une seule marque mal formée ne doit pas empêcher les autres
@@ -138,10 +167,15 @@ export async function loadBrandRecords(opts?: { fresh?: boolean }): Promise<Bran
   if (!opts?.fresh && cache && Date.now() - cache.at < TTL_MS) return cache.records;
 
   const rows = await fetchRows();
-  const records = codeRecords();
+  if (rows === null) return (cache = { at: Date.now(), records: seedRecords("base injoignable") }).records;
+  if (rows.length === 0 && BRANDS.length === 0) {
+    return (cache = { at: Date.now(), records: seedRecords("table vide") }).records;
+  }
+
+  const records = asRecords(BRANDS);
   const taken = new Set(records.map((r) => r.brand.slug));
 
-  for (const row of rows ?? []) {
+  for (const row of rows) {
     if (taken.has(row.slug)) {
       console.warn(
         `Marque « ${row.slug} » ignorée : ce slug appartient à une marque déclarée en code.`
@@ -208,9 +242,27 @@ export async function resolveBrandStrict(slug?: string | null): Promise<BrandCon
   return found.brand;
 }
 
+/**
+ * Marque retenue en l'absence d'indication : celle portant DEFAULT_BRAND_SLUG,
+ * sinon la première du registre.
+ *
+ * Lève si le registre est vide. Ce cas ne devrait pas se produire - le repli
+ * sur les configurations d'origine l'empêche - et le taire ferait rendre des
+ * pages sans identité de marque du tout.
+ */
+export async function defaultBrand(): Promise<BrandConfig> {
+  const records = await loadBrandRecords();
+  const wanted = records.find((r) => r.brand.slug === DEFAULT_BRAND_SLUG);
+  if (wanted) return wanted.brand;
+  if (records[0]) return records[0].brand;
+  throw new Error(
+    "Aucune marque disponible : la table `brands` est vide et aucune marque n'est déclarée en code."
+  );
+}
+
 /** Résolution tolérante : repli sur la marque par défaut si slug absent/inconnu. */
 export async function resolveBrandOrDefault(slug?: string | null): Promise<BrandConfig> {
-  return (await resolveBrand(slug)) ?? DEFAULT_BRAND;
+  return (await resolveBrand(slug)) ?? (await defaultBrand());
 }
 
 /**
@@ -263,7 +315,9 @@ export type BrandRowView = {
 };
 
 export async function listBrandRows(): Promise<BrandRowView[]> {
-  const out: BrandRowView[] = BRANDS.map((brand) => ({
+  const rows = await fetchRows();
+  const codeBrands = rows === null || rows.length === 0 ? (BRANDS.length ? BRANDS : SEED_BRANDS) : BRANDS;
+  const out: BrandRowView[] = codeBrands.map((brand) => ({
     slug: brand.slug,
     source: "code",
     active: true,
@@ -272,7 +326,7 @@ export async function listBrandRows(): Promise<BrandRowView[]> {
   }));
   const codeSlugs = new Set(out.map((o) => o.slug));
 
-  for (const row of (await fetchRows()) ?? []) {
+  for (const row of rows ?? []) {
     if (codeSlugs.has(row.slug)) continue;
     const parsed = parseBrandConfig(row.config);
     out.push({
@@ -385,6 +439,20 @@ export async function setBrandActive(slug: string, active: boolean): Promise<Bra
   const parsed = parseBrandConfig(row.config);
   if (!parsed.ok) throw new BrandWriteError(formatErrors(parsed.errors));
   return { brand: parsed.brand, source: "db", active: row.active, updatedAt: row.updated_at };
+}
+
+/**
+ * Lève la surcharge d'expédition héritée de l'ancien écran /reglages, pour que
+ * la configuration de la marque redevienne ce qui s'applique réellement.
+ *
+ * Supprimer la ligne plutôt que la vider : une ligne à colonnes nulles et une
+ * ligne absente ont déjà le même sens pour brandSender, autant ne pas laisser
+ * de trace qui ferait croire à un réglage.
+ */
+export async function clearSenderOverride(slug: string): Promise<void> {
+  const db = supabaseAdmin();
+  const { error } = await db.from("brand_settings").delete().eq("brand", slug);
+  if (error) throw new BrandWriteError(error.message, 500);
 }
 
 /** Tables cloisonnées par marque (voir migration 0009). */

@@ -9,7 +9,6 @@ export default function MarquesPage() {
       <AppHeader
         subtitle="Marques"
         links={[
-          { href: "/reglages", label: "Réglages" },
           { href: "/", label: "← Prospection" },
         ]}
       />

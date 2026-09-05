@@ -1,6 +1,23 @@
 /**
- * Registre des marques. Ajouter une marque = créer lib/brands/<slug>.ts
- * (voir lib/brands/_example.ts) puis l'ajouter au tableau BRANDS ci-dessous.
+ * Marques déclarées en CODE.
+ *
+ * Historiquement, ce fichier était le registre : Tag2Share et Horodo y étaient
+ * listées et l'application n'en connaissait pas d'autres. Depuis la migration
+ * 0013, toutes les marques vivent en base (table `brands`) et se modifient
+ * dans /marques. Le registre effectif est donc lib/brands/store.ts.
+ *
+ * Ce qui reste ici sert deux rôles, et deux seulement :
+ *
+ *  - SEED_BRANDS : les configurations d'origine. Elles ont servi à écrire la
+ *    migration 0013, et font office de CANOT DE SAUVETAGE si la base est
+ *    injoignable ou vide - sans quoi une panne Supabase laisserait l'app sans
+ *    aucune marque, donc incapable de rendre la moindre page.
+ *
+ *  - BRANDS : les marques qui, DANS LE CODE, ont autorité sur celles de la
+ *    base. Le tableau est vide, et c'est voulu : une entrée ici masquerait la
+ *    ligne de base du même slug, rendant ses modifications sans effet et
+ *    invisibles. À ne réutiliser que pour figer délibérément une marque hors
+ *    de portée de l'interface.
  *
  * Client-safe : aucun secret, aucune lecture de process.env.
  */
@@ -10,44 +27,24 @@ import { horodo } from "./horodo";
 
 export * from "./types";
 
-/** Toutes les marques gérées par l'outil, dans l'ordre d'affichage. */
-export const BRANDS: BrandConfig[] = [tag2share, horodo];
-
-/** Marque utilisée quand la requête n'en précise aucune (rétro-compatibilité). */
-export const DEFAULT_BRAND: BrandConfig = BRANDS[0];
-
-/** Recherche stricte : undefined si le slug est inconnu. */
-export function findBrand(slug?: string | null): BrandConfig | undefined {
-  if (!slug) return undefined;
-  const s = String(slug).trim().toLowerCase();
-  return BRANDS.find((b) => b.slug === s);
-}
+/**
+ * Configurations d'origine des deux marques historiques. Repli d'urgence
+ * uniquement (voir loadBrandRecords) : en fonctionnement normal, la base fait
+ * foi et ces objets ne sont jamais lus.
+ */
+export const SEED_BRANDS: BrandConfig[] = [tag2share, horodo];
 
 /**
- * Résolution stricte, à utiliser partout où une erreur d'identité serait grave
- * (rendu et envoi d'email) : mieux vaut échouer que d'envoyer sous la mauvaise
- * marque.
+ * Marques déclarées en code, prioritaires sur la base. Vide par choix : voir
+ * l'en-tête de ce fichier.
  */
-export function getBrand(slug?: string | null): BrandConfig {
-  const b = findBrand(slug);
-  if (!b) {
-    throw new Error(
-      `Marque inconnue : "${slug}". Marques disponibles : ${BRANDS.map((x) => x.slug).join(", ")}.`
-    );
-  }
-  return b;
-}
+export const BRANDS: BrandConfig[] = [];
 
-/** Résolution tolérante : repli sur la marque par défaut si slug absent/inconnu. */
-export function getBrandOrDefault(slug?: string | null): BrandConfig {
-  return findBrand(slug) ?? DEFAULT_BRAND;
-}
-
-/** Liste légère pour le sélecteur de marque de l'UI. */
-export function brandOptions(): { slug: string; name: string; monogram: string }[] {
-  return BRANDS.map((b) => ({
-    slug: b.slug,
-    name: b.name,
-    monogram: b.theme.monogram,
-  }));
-}
+/**
+ * Marque retenue quand la requête n'en désigne aucune. C'est un SLUG et non
+ * un objet : la configuration correspondante est lue en base, et cette
+ * constante doit rester utilisable même quand la base ne répond pas (c'est
+ * elle qui permet à lib/unsubscribe.ts de reconnaître les liens signés à
+ * l'ancien format, émis avant le multi-marque).
+ */
+export const DEFAULT_BRAND_SLUG = "tag2share";

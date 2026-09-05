@@ -15,7 +15,7 @@
  */
 import crypto from "crypto";
 import { normEmail } from "./suppression";
-import { DEFAULT_BRAND } from "./brands";
+import { DEFAULT_BRAND_SLUG } from "./brands";
 import type { BrandConfig } from "./brands/types";
 import { brandAppUrl } from "./public-url";
 
@@ -61,7 +61,7 @@ function equals(a: string, b: string): boolean {
 export function verify(email: string, token: string, brandSlug: string): boolean {
   if (!email || !token) return false;
   if (equals(sign(email, brandSlug), token)) return true;
-  if (brandSlug === DEFAULT_BRAND.slug && equals(signLegacy(email), token)) return true;
+  if (brandSlug === DEFAULT_BRAND_SLUG && equals(signLegacy(email), token)) return true;
   return false;
 }
 

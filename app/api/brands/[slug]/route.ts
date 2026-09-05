@@ -5,6 +5,7 @@ import { webhookUrl } from "@/lib/public-url";
 import {
   BrandWriteError,
   brandUsage,
+  clearSenderOverride,
   deleteBrand,
   listBrandRows,
   setBrandActive,
@@ -22,6 +23,24 @@ async function readinessOf(brand: BrandConfig) {
     testEmail: sender.testEmail,
     fromSource: sender.fromSource,
   });
+}
+
+/**
+ * Ce qui s'appliquera réellement à l'envoi. Renvoyé à côté de la configuration
+ * saisie : tant qu'une surcharge héritée existe, les deux diffèrent, et
+ * n'afficher que le formulaire laisserait croire qu'il fait foi.
+ */
+async function effectiveOf(brand: BrandConfig) {
+  const s = await brandSender(brand);
+  return {
+    from: s.from,
+    fromEmail: s.fromEmail,
+    replyTo: s.replyTo,
+    testEmail: s.testEmail ?? null,
+    dailyCap: s.dailyCap,
+    delayMs: s.delayMs,
+    fromSource: s.fromSource,
+  };
 }
 
 async function row(slug: string) {
@@ -48,6 +67,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ slug: s
       updatedAt: r.updatedAt ?? null,
       usage: await brandUsage(slug),
       readiness: r.brand ? await readinessOf(r.brand) : null,
+      effective: r.brand ? await effectiveOf(r.brand) : null,
       // Affiché tel quel dans l'interface : c'est l'adresse à déclarer chez
       // Resend, et elle suit désormais le domaine public de la marque.
       webhookUrl: r.brand ? webhookUrl(r.brand) : null,
@@ -67,15 +87,28 @@ export async function GET(_req: Request, { params }: { params: Promise<{ slug: s
  */
 export async function PATCH(req: Request, { params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
-  const body = await readJson<{ config?: unknown; active?: boolean }>(req);
+  const body = await readJson<{ config?: unknown; active?: boolean; clearOverride?: boolean }>(req);
 
   try {
+    if (body.clearOverride === true) {
+      await clearSenderOverride(slug);
+      const r = await row(slug);
+      if (!r?.brand) return fail(`Marque introuvable ou invalide : « ${slug} ».`, 404);
+      return ok({
+        config: r.brand,
+        active: r.active,
+        readiness: await readinessOf(r.brand),
+        effective: await effectiveOf(r.brand),
+      });
+    }
+
     if (body.config !== undefined) {
       const record = await updateBrand(slug, body.config);
       return ok({
         config: record.brand,
         active: record.active,
         readiness: await readinessOf(record.brand),
+        effective: await effectiveOf(record.brand),
         webhookUrl: webhookUrl(record.brand),
       });
     }
@@ -97,10 +130,11 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ slug: 
         config: record.brand,
         active: record.active,
         readiness: await readinessOf(record.brand),
+        effective: await effectiveOf(record.brand),
       });
     }
 
-    return fail("Rien à modifier : fournissez `config` ou `active`.");
+    return fail("Rien à modifier : fournissez `config`, `active` ou `clearOverride`.");
   } catch (e) {
     if (e instanceof BrandWriteError) return fail(e.message, e.status);
     return fail((e as Error).message, 500);

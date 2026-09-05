@@ -302,6 +302,16 @@ function Field({
 /* Éditeur                                                             */
 /* ------------------------------------------------------------------ */
 
+type Effective = {
+  from: string;
+  fromEmail: string;
+  replyTo: string;
+  testEmail: string | null;
+  dailyCap: number;
+  delayMs: number;
+  fromSource: "settings" | "env" | "config";
+};
+
 type Loaded = {
   slug: string;
   editable: boolean;
@@ -309,7 +319,14 @@ type Loaded = {
   config: BrandConfig;
   usage: Record<string, number>;
   readiness: { ok: boolean; blockers: string[]; warnings: string[] } | null;
+  effective: Effective | null;
   webhookUrl: string | null;
+};
+
+const SOURCE_LABEL: Record<Effective["fromSource"], string> = {
+  config: "configuration de la marque",
+  settings: "surcharge héritée de l'ancien écran Réglages",
+  env: "variable d'environnement",
 };
 
 /**
@@ -402,6 +419,28 @@ export function BrandEditor({ slug }: { slug?: string }) {
     }
   }
 
+  /**
+   * Supprime la surcharge d'expédition héritée, pour que les champs saisis
+   * ci-dessus redeviennent ce qui part réellement.
+   */
+  async function clearOverride() {
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      const r = await api<Loaded>(`/api/brands/${slug}`, {
+        method: "PATCH",
+        json: { clearOverride: true },
+      });
+      setLoaded((prev) => (prev ? { ...prev, ...r } : prev));
+      setMessage("Surcharge levée : la configuration de la marque s'applique.");
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function remove() {
     if (!confirm(`Supprimer définitivement la marque « ${form.name || slug} » ?`)) return;
     setBusy(true);
@@ -469,6 +508,54 @@ export function BrandEditor({ slug }: { slug?: string }) {
           {loaded.webhookUrl && (
             <p className="mt-3 text-[11px] text-gray-400">
               Webhook à déclarer chez Resend : <code>{loaded.webhookUrl}</code>
+            </p>
+          )}
+        </Card>
+      )}
+
+      {loaded?.effective && (
+        <Card className="p-5">
+          <h3 className="mb-3 font-bold">Ce qui s&apos;appliquera à l&apos;envoi</h3>
+          <dl className="grid gap-2 text-sm sm:grid-cols-[max-content_1fr]">
+            <dt className="font-medium text-gray-600">En-tête From</dt>
+            <dd className="font-mono text-gray-800">
+              {loaded.effective.from}{" "}
+              <Badge color={loaded.effective.fromSource === "config" ? "green" : "amber"}>
+                {SOURCE_LABEL[loaded.effective.fromSource]}
+              </Badge>
+            </dd>
+            <dt className="font-medium text-gray-600">Reply-To</dt>
+            <dd className="font-mono text-gray-800">{loaded.effective.replyTo}</dd>
+            <dt className="font-medium text-gray-600">Emails de test</dt>
+            <dd className="font-mono text-gray-800">
+              {loaded.effective.testEmail || <span className="text-red-600">non configurée</span>}
+            </dd>
+            <dt className="font-medium text-gray-600">Cadence</dt>
+            <dd className="text-gray-800">
+              {loaded.effective.dailyCap === 0
+                ? "illimité"
+                : `${loaded.effective.dailyCap} emails/jour`}{" "}
+              · délai {loaded.effective.delayMs} ms
+            </dd>
+          </dl>
+
+          {loaded.effective.fromSource === "settings" && (
+            <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+              <p>
+                Une surcharge enregistrée dans l&apos;ancien écran Réglages prime sur les
+                champs d&apos;expédition ci-dessous : ce que vous y saisissez n&apos;a aucun
+                effet tant qu&apos;elle existe.
+              </p>
+              <Button variant="outline" className="mt-3" onClick={clearOverride} disabled={busy}>
+                {busy ? <Spinner /> : "Lever la surcharge"}
+              </Button>
+            </div>
+          )}
+          {loaded.effective.fromSource === "env" && (
+            <p className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+              Une variable d&apos;environnement impose l&apos;adresse d&apos;envoi. Les champs
+              ci-dessous ne s&apos;appliqueront qu&apos;une fois cette variable retirée du
+              déploiement.
             </p>
           )}
         </Card>
@@ -624,7 +711,7 @@ export function BrandEditor({ slug }: { slug?: string }) {
         </div>
       </Section>
 
-      <Section title="Expédition" hint="valeurs par défaut, affinables dans Réglages">
+      <Section title="Expédition" hint="ce qui part réellement, sauf surcharge signalée ci-dessus">
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="Nom affiché de l'expéditeur">
             <Input value={form.fromName} disabled={disabled} onChange={(e) => set("fromName", e.target.value)} placeholder="Prénom de la marque" />

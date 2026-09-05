@@ -3,13 +3,18 @@
  *
  * La clé API Resend est UNIQUE pour toute l'app (RESEND_API_KEY) : un seul
  * compte Resend, plusieurs domaines vérifiés. Ce qui change d'une marque à
- * l'autre, c'est l'adresse d'envoi - saisie dans l'interface et stockée dans
- * la table `brand_settings`.
+ * l'autre, c'est l'adresse d'envoi.
  *
  * Ordre de résolution, du plus fort au plus faible :
- *   1. table brand_settings   (saisi dans /reglages)
- *   2. variable d'environnement nommée dans lib/brands/<slug>.ts
- *   3. valeur littérale de lib/brands/<slug>.ts
+ *   1. table brand_settings   SURCHARGE HÉRITÉE de l'ancien écran /reglages
+ *   2. variable d'environnement nommée par une marque déclarée en code
+ *   3. configuration de la marque (`sender`), éditable dans /marques
+ *
+ * Le cas normal est aujourd'hui le 3 : la configuration vit en base et
+ * s'édite, elle n'a plus besoin d'être contournée sans redéploiement. Les deux
+ * premiers niveaux restent lus pour ne pas changer en silence l'identité d'une
+ * installation qui s'en sert - l'éditeur signale la surcharge et permet de la
+ * lever.
  *
  * Le couple (nom, adresse) est résolu comme un TOUT : on ne mélange jamais un
  * nom enregistré avec une adresse venue du code, ce qui produirait une
@@ -167,7 +172,7 @@ export type SenderRuntime = {
   dailyCap: number;
   delayMs: number;
   /** D'où vient l'adresse d'envoi effective (affiché dans l'UI). */
-  fromSource: "settings" | "env" | "code";
+  fromSource: "settings" | "env" | "config";
 };
 
 /**
@@ -179,9 +184,9 @@ export async function brandSender(brand: BrandConfig): Promise<SenderRuntime> {
   const s = brand.sender;
   const row = await readBrandSettings(brand.slug);
 
-  // 1. Enregistré dans l'interface.
+  // 1. Surcharge héritée de l'ancien écran /reglages.
   let from: MailAddress | undefined;
-  let fromSource: SenderRuntime["fromSource"] = "code";
+  let fromSource: SenderRuntime["fromSource"] = "config";
   if (row.from_email && isValidEmail(row.from_email)) {
     from = { name: row.from_name?.trim() || undefined, email: row.from_email.trim() };
     fromSource = "settings";
@@ -194,10 +199,10 @@ export async function brandSender(brand: BrandConfig): Promise<SenderRuntime> {
       fromSource = "env";
     }
   }
-  // 3. Défaut du code.
+  // 3. Configuration de la marque : le cas normal.
   if (!from) {
     from = { name: s.fromName, email: s.from };
-    fromSource = "code";
+    fromSource = "config";
   }
 
   const replyTo =

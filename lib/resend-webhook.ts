@@ -23,8 +23,7 @@ import { supabaseAdmin } from "./supabase";
 import { addSuppression, type SuppressionReason } from "./suppression";
 import { recordEmailEvent } from "./email-log";
 import { brandSender, resendWebhookSecret, parseAddress } from "./brand-sender";
-import { DEFAULT_BRAND } from "./brands";
-import { loadBrands, resolveBrand } from "./brands/store";
+import { defaultBrand, loadBrands, resolveBrand } from "./brands/store";
 import type { BrandConfig } from "./brands/types";
 
 /** Vérifie la signature Svix avec le secret commun. */
@@ -80,7 +79,7 @@ async function resolveEventBrand(
     }
   }
 
-  return DEFAULT_BRAND;
+  return defaultBrand();
 }
 
 /**
