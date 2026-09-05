@@ -107,22 +107,36 @@ pose l'en-tête `x-brand` que lisent les routes API.
 | Donnée | Périmètre |
 |---|---|
 | `segments`, `campaigns`, `searches`, `email_log` | **par marque** (colonne `brand`) |
-| `prospects` | **partagé** - les données d'entreprise (email, contact, logo) ne dépendent pas de la marque, ce qui évite de repayer Places + Gemini pour un business déjà enrichi |
+| `prospects` | **par marque** (colonne `brand`) - deux marques qui démarchent le même commerce en détiennent chacune leur fiche, éditable sans se marcher dessus. L'unicité du `place_id` est donc `(brand, place_id)` |
 | `suppressions` | **par périmètre** : `brand = '*'` (toutes marques) ou `brand = '<slug>'` - règle décidée par `suppressionScope()` dans [`lib/suppression.ts`](lib/suppression.ts) |
-| « déjà contacté » | **par marque** ; les contacts des autres marques sont signalés (badge `↔`) sans bloquer l'envoi |
+| « déjà contacté » | **par marque** ; les contacts des autres marques sont signalés (badge `↔`) sans bloquer l'envoi - rapprochement par **email**, seul point commun entre deux fiches désormais distinctes |
 | Plafond d'envoi quotidien | **par marque** (la réputation se joue par domaine) |
 
 Le cloisonnement est **applicatif** : la RLS Supabase est active sans policy, tous
 les accès passent par la clé `service_role` côté serveur. Toute nouvelle route qui
 lit ou écrit des données de marque doit filtrer explicitement sur `brand`.
 
+### Ne pas repayer l'enrichissement
+
+Cloisonner le vivier coûterait cher si chaque marque devait relancer Places +
+Gemini sur un commerce déjà enrichi par une autre. Quand une marque découvre un
+business déjà connu ailleurs, elle obtient **sa propre ligne**, pré-remplie avec
+les données d'**entreprise** déjà payées (email, contact, logo, téléphone, site,
+adresse, blob `enrichment`) : [`lib/prospect-seed.ts`](lib/prospect-seed.ts),
+appelé par la recherche Places et par l'import de fichiers.
+
+La reprise a lieu **une seule fois, à la création**. Ensuite les deux lignes sont
+indépendantes : corriger un email chez une marque ne touche pas l'autre. Ne sont
+jamais repris les jugements propres à une marque : `status: "rejected"`, le
+segment d'origine, les rattachements, l'historique de contact.
+
 ### Résolution du produit mis en avant
 
-Le vivier de prospects étant partagé, `prospects.segment_id` (segment d'ORIGINE)
-peut pointer vers un segment d'une **autre** marque. Le produit de `{{product_*}}`
-est donc résolu via les **segments de la campagne**, filtrés sur sa marque :
-[`lib/campaign-segments.ts`](lib/campaign-segments.ts). L'aperçu de l'UI utilise la
-même résolution (`resolved_segment`) que l'envoi réel.
+`prospects.segment_id` (segment d'ORIGINE) peut pointer vers un segment d'une
+**autre** marque sur les données antérieures à `0015`, quand le vivier était
+partagé. Le produit de `{{product_*}}` est donc résolu via les **segments de la
+campagne**, filtrés sur sa marque : [`lib/campaign-segments.ts`](lib/campaign-segments.ts).
+L'aperçu de l'UI utilise la même résolution (`resolved_segment`) que l'envoi réel.
 
 ## Stack
 
@@ -158,6 +172,12 @@ Puis les migrations, dans l'ordre. Pour le multi-marque :
   périmètre des suppressions, clé primaire `(email, brand)`.
 - [`0011_brand_sender.sql`](supabase/migrations/0011_brand_sender.sql) - table
   `brand_settings` : adresse d'envoi par marque, éditable dans /reglages.
+- [`0015_prospects_brand.sql`](supabase/migrations/0015_prospects_brand.sql) -
+  cloisonnement du vivier : colonne `brand` sur `prospects`, unicité
+  `(brand, place_id)` à la place du `place_id` global, chaque prospect existant
+  attribué à la marque de son segment d'origine. Les rattachements devenus
+  inter-marques sont supprimés ; les destinataires de campagne inter-marques
+  sont conservés (archive) mais ignorés à l'envoi.
 
 ⚠️ **À exécuter avant de lancer la version multi-marque** : les routes écrivent
 désormais la colonne `brand`.

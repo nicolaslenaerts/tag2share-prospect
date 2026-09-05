@@ -1,5 +1,5 @@
 "use client";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import { Button, Card, Badge, Spinner } from "@/components/ui";
 import {
@@ -9,7 +9,9 @@ import {
   type CsvTable,
   type ImportField,
 } from "@/lib/csv";
-import type { ImportReport, ImportRow } from "@/lib/prospect-import";
+import type { ImportReport, ImportRow, SegmentTally } from "@/lib/prospect-import";
+import { labelKey, segmentLabelFromCategory } from "@/lib/segment-matching";
+import type { SegmentResolution } from "@/app/api/segments/resolve/route";
 
 type Segment = { id: string; label: string };
 
@@ -47,7 +49,26 @@ const emptyReport = (): ImportReport => ({
   duplicates: 0,
   droppedEmails: 0,
   skipped: [],
+  segments: [],
 });
+
+/** Fusionne les compteurs par segment de plusieurs lots. */
+function mergeTallies(into: SegmentTally[], from: SegmentTally[]) {
+  for (const t of from) {
+    const hit = into.find((x) => x.id === t.id);
+    if (hit) {
+      hit.created += t.created;
+      hit.merged += t.merged;
+    } else into.push({ ...t });
+  }
+}
+
+/** Valeurs spéciales du plan, distinctes d'un id de segment (uuid). */
+const CREATE = "__new__";
+const SKIP = "__skip__";
+
+/** Une valeur distincte de la colonne catégorie, et son poids dans le fichier. */
+type Bucket = { key: string; label: string; count: number };
 
 export function ProspectImport({
   segments,
@@ -66,6 +87,10 @@ export function ProspectImport({
     {} as Record<ImportField, number>
   );
   const [segmentId, setSegmentId] = useState("");
+  const [mode, setMode] = useState<"single" | "category">("single");
+  /** Cible choisie pour chaque catégorie : id de segment, CREATE ou SKIP. */
+  const [plan, setPlan] = useState<Record<string, string>>({});
+  const [planBusy, setPlanBusy] = useState(false);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [report, setReport] = useState<ImportReport | null>(null);
@@ -127,8 +152,81 @@ export function ProspectImport({
   }, [table, mapping]);
 
   const nameMapped = (mapping.name ?? -1) >= 0;
+  const categoryMapped = (mapping.category ?? -1) >= 0;
   const withEmail = rows.filter((r) => (r.email || "").includes("@")).length;
-  const ready = !!table && rows.length > 0 && nameMapped && !!segmentId && !busy;
+
+  /**
+   * Valeurs distinctes de la colonne catégorie, regroupées par clé de
+   * rapprochement : « Coiffeur » et « coiffeurs » forment UN seul groupe, donc
+   * un seul segment. Le groupe de clé "" rassemble les lignes sans catégorie.
+   */
+  const buckets = useMemo<Bucket[]>(() => {
+    if (!categoryMapped) return [];
+    const map = new Map<string, Bucket>();
+    for (const r of rows) {
+      const raw = (r.category || "").trim();
+      const key = labelKey(raw);
+      const hit = map.get(key);
+      if (hit) hit.count++;
+      else
+        map.set(key, {
+          key,
+          label: key ? segmentLabelFromCategory(raw) : "Sans catégorie",
+          count: 1,
+        });
+    }
+    return [...map.values()].sort((a, b) => b.count - a.count);
+  }, [rows, categoryMapped]);
+
+  /** Signature des groupes : évite de relancer la résolution à chaque rendu. */
+  const bucketSig = buckets.map((b) => b.key).join("|");
+
+  /**
+   * Proposition de plan : chaque catégorie est pré-rattachée au segment
+   * existant qui lui correspond (voir lib/segment-matching), sinon marquée
+   * « à créer ». Aucune écriture ici : `create: false`.
+   */
+  useEffect(() => {
+    if (mode !== "category" || buckets.length === 0) return;
+    let cancelled = false;
+    const labels = buckets.filter((b) => b.key).map((b) => b.label);
+    setPlanBusy(true);
+    api<{ resolutions: SegmentResolution[] }>("/api/segments/resolve", {
+      method: "POST",
+      json: { labels, create: false },
+    })
+      .then((r) => {
+        if (cancelled) return;
+        const byKey = new Map(r.resolutions.map((x) => [x.key, x]));
+        const next: Record<string, string> = {};
+        for (const b of buckets) {
+          if (!b.key) {
+            // Les lignes sans catégorie ne sont rattachées nulle part par
+            // défaut : les verser au hasard dans un segment serait pire que
+            // de les laisser de côté explicitement.
+            next[b.key] = SKIP;
+            continue;
+          }
+          next[b.key] = byKey.get(b.key)?.segmentId ?? CREATE;
+        }
+        setPlan(next);
+      })
+      .catch((e) => !cancelled && setError((e as Error).message))
+      .finally(() => !cancelled && setPlanBusy(false));
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, bucketSig]);
+
+  /** Groupes effectivement importés (les autres sont ignorés). */
+  const planned = buckets.filter((b) => (plan[b.key] ?? SKIP) !== SKIP);
+  const toCreateCount = planned.filter((b) => plan[b.key] === CREATE).length;
+  const plannedRows = planned.reduce((n, b) => n + b.count, 0);
+
+  const targetReady =
+    mode === "single" ? !!segmentId : planned.length > 0 && !planBusy;
+  const ready = !!table && rows.length > 0 && nameMapped && targetReady && !busy;
 
   function reset() {
     setRaw("");
@@ -137,6 +235,31 @@ export function ProspectImport({
     setReport(null);
     setError("");
     if (fileRef.current) fileRef.current.value = "";
+  }
+
+  /**
+   * Construit la cible de chaque ligne AVANT la boucle de lots : les segments
+   * manquants sont créés une seule fois, sinon chaque lot en recréerait un
+   * jeu complet.
+   */
+  async function resolveTargets(): Promise<Record<string, string> | null> {
+    if (mode === "single") return null;
+    const toCreate = planned.filter((b) => plan[b.key] === CREATE);
+    const created = new Map<string, string>();
+    if (toCreate.length) {
+      const r = await api<{ resolutions: SegmentResolution[] }>("/api/segments/resolve", {
+        method: "POST",
+        json: { labels: toCreate.map((b) => b.label), create: true },
+      });
+      for (const x of r.resolutions) if (x.segmentId) created.set(x.key, x.segmentId);
+    }
+    const map: Record<string, string> = {};
+    for (const b of planned) {
+      const choice = plan[b.key];
+      const id = choice === CREATE ? created.get(b.key) : choice;
+      if (id) map[b.key] = id;
+    }
+    return map;
   }
 
   async function run() {
@@ -152,12 +275,17 @@ export function ProspectImport({
     // bien détecté (le lot précédent est déjà écrit en base).
     const sum = emptyReport();
     try {
+      const segmentMap = await resolveTargets();
       for (let i = 0; i < total; i += CHUNK) {
         const slice = rows.slice(i, i + CHUNK);
         const r = await api<{ report: ImportReport }>("/api/prospects/import", {
           method: "POST",
           json: {
-            segmentId,
+            // Un seul segment, ou une cible par catégorie. Les lignes dont la
+            // catégorie n'est dans aucun des deux sont signalées par le
+            // serveur dans `skipped`.
+            segmentId: segmentMap ? undefined : segmentId,
+            segmentMap: segmentMap ?? undefined,
             rows: slice,
             filename,
             // Index réel dans le fichier, pour que le rapport pointe la bonne ligne.
@@ -170,6 +298,7 @@ export function ProspectImport({
         sum.duplicates += r.report.duplicates;
         sum.droppedEmails += r.report.droppedEmails;
         sum.skipped.push(...r.report.skipped);
+        mergeTallies(sum.segments, r.report.segments ?? []);
         if (r.report.warning) sum.warning = r.report.warning;
         setProgress({ done: Math.min(i + CHUNK, total), total });
       }
@@ -334,40 +463,150 @@ export function ProspectImport({
             </p>
           </div>
 
-          {/* Segment cible + lancement */}
-          <div className="flex flex-wrap items-end gap-3 border-t border-gray-100 pt-4">
-            <label className="text-sm">
-              <span className="mb-1 block text-xs font-medium text-gray-600">
-                Rattacher au segment <span className="text-red-600">*</span>
-              </span>
-              <select
-                value={segmentId}
-                onChange={(e) => setSegmentId(e.target.value)}
-                className="min-w-[16rem] rounded-lg border border-gray-300 px-3 py-2 text-sm"
+          {/* Rattachement + lancement */}
+          <div className="space-y-3 border-t border-gray-100 pt-4">
+            <div className="flex flex-wrap gap-4">
+              <label className="flex items-center gap-2 text-sm text-gray-700">
+                <input
+                  type="radio"
+                  checked={mode === "single"}
+                  onChange={() => setMode("single")}
+                />
+                Tout rattacher à un seul segment
+              </label>
+              <label
+                className={`flex items-center gap-2 text-sm ${
+                  categoryMapped ? "text-gray-700" : "text-gray-400"
+                }`}
               >
-                <option value="">— choisir un segment —</option>
-                {segments.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <Button onClick={run} disabled={!ready}>
-              {busy ? (
-                <span className="inline-flex items-center gap-2">
-                  <Spinner />
-                  {progress ? `${progress.done}/${progress.total}` : null}
+                <input
+                  type="radio"
+                  checked={mode === "category"}
+                  disabled={!categoryMapped}
+                  onChange={() => setMode("category")}
+                />
+                Un segment par catégorie
+                {!categoryMapped && (
+                  <span className="text-xs">(mappez la colonne catégorie)</span>
+                )}
+              </label>
+            </div>
+
+            {mode === "single" ? (
+              <label className="block text-sm">
+                <span className="mb-1 block text-xs font-medium text-gray-600">
+                  Rattacher au segment <span className="text-red-600">*</span>
                 </span>
-              ) : (
-                `Importer ${rows.length} ligne${rows.length > 1 ? "s" : ""}`
-              )}
-            </Button>
-            {segments.length === 0 && (
-              <p className="text-sm text-gray-500">
-                Aucun segment disponible : validez-en un à l'étape 1.
-              </p>
+                <select
+                  value={segmentId}
+                  onChange={(e) => setSegmentId(e.target.value)}
+                  className="min-w-[16rem] rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                >
+                  <option value="">— choisir un segment —</option>
+                  {segments.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : (
+              <div>
+                <div className="mb-2 flex items-center gap-2">
+                  <h4 className="text-sm font-semibold text-gray-700">
+                    Plan de rattachement ({buckets.filter((b) => b.key).length} catégorie
+                    {buckets.filter((b) => b.key).length > 1 ? "s" : ""})
+                  </h4>
+                  {planBusy && <Spinner />}
+                </div>
+                <div className="overflow-x-auto rounded-lg border border-gray-200">
+                  <table className="w-full text-sm">
+                    <thead className="bg-gray-50 text-left text-xs uppercase text-gray-500">
+                      <tr>
+                        <th className="p-2 font-medium">Catégorie du fichier</th>
+                        <th className="p-2 font-medium">Lignes</th>
+                        <th className="p-2 font-medium">Segment</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {buckets.map((b) => {
+                        const choice = plan[b.key] ?? SKIP;
+                        return (
+                          <tr key={b.key || "__empty__"} className="border-t border-gray-100">
+                            <td className="p-2">
+                              {b.key ? (
+                                b.label
+                              ) : (
+                                <span className="italic text-gray-500">Sans catégorie</span>
+                              )}
+                            </td>
+                            <td className="p-2 tabular-nums text-gray-500">{b.count}</td>
+                            <td className="p-2">
+                              <select
+                                value={choice}
+                                onChange={(e) =>
+                                  setPlan((x) => ({ ...x, [b.key]: e.target.value }))
+                                }
+                                className={`w-full min-w-[14rem] rounded-lg border px-2 py-1.5 text-sm ${
+                                  choice === SKIP
+                                    ? "border-gray-200 bg-gray-50 text-gray-400"
+                                    : "border-gray-300"
+                                }`}
+                              >
+                                {b.key && (
+                                  <option value={CREATE}>
+                                    + Créer le segment « {b.label} »
+                                  </option>
+                                )}
+                                {segments.map((s) => (
+                                  <option key={s.id} value={s.id}>
+                                    {s.label}
+                                  </option>
+                                ))}
+                                <option value={SKIP}>— ne pas importer —</option>
+                              </select>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="mt-2 text-xs text-gray-500">
+                  {plannedRows} ligne{plannedRows > 1 ? "s" : ""} sur {rows.length} seront
+                  importées
+                  {toCreateCount > 0 && (
+                    <>
+                      , dont {toCreateCount} nouveau{toCreateCount > 1 ? "x" : ""} segment
+                      {toCreateCount > 1 ? "s" : ""} à créer
+                    </>
+                  )}
+                  . Les segments créés ici reprennent le produit par défaut de la marque :
+                  ajustez-les à l'étape 1 avant de rédiger leurs emails.
+                </p>
+              </div>
             )}
+
+            <div className="flex flex-wrap items-center gap-3">
+              <Button onClick={run} disabled={!ready}>
+                {busy ? (
+                  <span className="inline-flex items-center gap-2">
+                    <Spinner />
+                    {progress ? `${progress.done}/${progress.total}` : null}
+                  </span>
+                ) : (
+                  `Importer ${mode === "category" ? plannedRows : rows.length} ligne${
+                    (mode === "category" ? plannedRows : rows.length) > 1 ? "s" : ""
+                  }`
+                )}
+              </Button>
+              {segments.length === 0 && mode === "single" && (
+                <p className="text-sm text-gray-500">
+                  Aucun segment disponible : validez-en un à l'étape 1, ou importez par
+                  catégorie pour les créer depuis le fichier.
+                </p>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -401,6 +640,24 @@ function ImportSummary({ report }: { report: ImportReport }) {
           <Badge color="red">{report.skipped.length} lignes ignorées</Badge>
         )}
       </div>
+      {report.segments.length > 1 && (
+        <div className="mt-3">
+          <h5 className="mb-1 text-xs font-semibold uppercase text-gray-500">
+            Répartition par segment
+          </h5>
+          <ul className="space-y-0.5 text-xs text-gray-600">
+            {report.segments
+              .slice()
+              .sort((a, b) => b.created + b.merged - (a.created + a.merged))
+              .map((t) => (
+                <li key={t.id}>
+                  <b>{t.label}</b> : {t.created} nouveau{t.created > 1 ? "x" : ""}
+                  {t.merged > 0 && `, ${t.merged} déjà dans le vivier`}
+                </li>
+              ))}
+          </ul>
+        </div>
+      )}
       {report.droppedEmails > 0 && (
         <p className="mt-2 text-xs text-gray-500">
           Emails écartés : format invalide ou adresse automatique (no-reply@…). Le

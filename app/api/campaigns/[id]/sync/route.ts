@@ -57,6 +57,7 @@ export async function POST(req: Request, { params }: Ctx) {
   const { data: prospects, error: pErr } = await db
     .from("prospects")
     .select("*")
+    .eq("brand", brand.slug)
     .in("id", candidateIds);
   if (pErr) return fail(pErr.message, 500);
 

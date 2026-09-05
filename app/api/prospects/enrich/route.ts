@@ -1,21 +1,27 @@
 import { enrichProspect } from "@/lib/enrich";
 import { supabaseAdmin } from "@/lib/supabase";
 import { ok, fail, readJson } from "@/lib/http";
+import { activeBrand } from "@/lib/brand-context";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
 /**
  * Étape 3 - enrichit un ou plusieurs prospects à partir de leur site web.
+ *
+ * Le vivier est cloisonné par marque : on n'enrichit que des prospects de la
+ * marque active. Un id venu d'ailleurs est simplement absent du résultat.
  */
 export async function POST(req: Request) {
   const { ids } = await readJson<{ ids: string[] }>(req);
   if (!Array.isArray(ids) || ids.length === 0) return fail("ids requis.");
 
+  const brand = await activeBrand(req);
   const db = supabaseAdmin();
   const { data: prospects, error } = await db
     .from("prospects")
     .select("*")
+    .eq("brand", brand.slug)
     .in("id", ids);
   if (error) return fail(error.message, 500);
 
@@ -46,6 +52,7 @@ export async function POST(req: Request) {
           status: "enriched",
         })
         .eq("id", p.id)
+        .eq("brand", brand.slug)
         .select()
         .single();
       return row;

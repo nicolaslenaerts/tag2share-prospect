@@ -2,6 +2,7 @@ import { searchPlaces, COUNTRY_CODES } from "@/lib/places";
 import { supabaseAdmin } from "@/lib/supabase";
 import { ok, fail, readJson } from "@/lib/http";
 import { activeBrand } from "@/lib/brand-context";
+import { seedFromOtherBrand } from "@/lib/prospect-seed";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -72,6 +73,7 @@ export async function POST(req: Request) {
   // d'origine d'un business déjà capté ailleurs. L'origine est posée plus bas
   // uniquement pour les nouveaux prospects ; l'appartenance vit dans segment_prospects.
   const rows = [...byId.values()].map((p) => ({
+    brand: brand.slug,
     place_id: p.id,
     name: p.name,
     category: p.category ?? segment.label,
@@ -86,9 +88,44 @@ export async function POST(req: Request) {
     status: "found",
   }));
 
+  // Reprise de l'enrichissement d'une AUTRE marque (voir lib/prospect-seed).
+  // Le vivier est cloisonné : cette marque obtient sa propre ligne, mais on ne
+  // repaie pas Places + Gemini pour un email déjà trouvé ailleurs.
+  //
+  // ⚠️ Uniquement pour les commerces que cette marque ne connaît PAS encore.
+  // Sinon l'upsert (on conflict do update) écraserait avec les valeurs d'une
+  // autre marque un email corrigé à la main ici.
+  const placeIds = rows.map((r) => r.place_id).filter(Boolean);
+  const mine = new Set<string>();
+  const donors = new Map<string, any>();
+  const LOOKUP = 100; // borne la longueur de l'URL PostgREST
+  for (let i = 0; i < placeIds.length; i += LOOKUP) {
+    const { data: known, error: kErr } = await db
+      .from("prospects")
+      .select(
+        "place_id, brand, status, email, contact_name, logo_url, phone, website, address, city, country, enrichment"
+      )
+      .in("place_id", placeIds.slice(i, i + LOOKUP));
+    if (kErr) return fail(kErr.message, 500);
+    for (const k of known ?? []) {
+      if (k.brand === brand.slug) {
+        mine.add(k.place_id);
+        continue;
+      }
+      // Une fiche enrichie prime sur une fiche seulement trouvée.
+      const cur = donors.get(k.place_id);
+      if (!cur || (cur.status !== "enriched" && k.status === "enriched"))
+        donors.set(k.place_id, k);
+    }
+  }
+
+  const seeded = rows.map((r) =>
+    mine.has(r.place_id) ? r : { ...r, ...seedFromOtherBrand(r, donors.get(r.place_id)) }
+  );
+
   const { data, error } = await db
     .from("prospects")
-    .upsert(rows, { onConflict: "place_id", ignoreDuplicates: false })
+    .upsert(seeded, { onConflict: "brand,place_id", ignoreDuplicates: false })
     .select("id, segment_id");
   if (error) return fail(error.message, 500);
 
@@ -97,7 +134,11 @@ export async function POST(req: Request) {
   // Segment d'origine : posé seulement si le prospect n'en a pas encore.
   const orphanIds = (data ?? []).filter((p) => !p.segment_id).map((p) => p.id);
   if (orphanIds.length) {
-    await db.from("prospects").update({ segment_id: segmentId }).in("id", orphanIds);
+    await db
+      .from("prospects")
+      .update({ segment_id: segmentId })
+      .eq("brand", brand.slug)
+      .in("id", orphanIds);
   }
 
   // Appartenance multi-segment (idempotent grâce à la clé primaire composée).

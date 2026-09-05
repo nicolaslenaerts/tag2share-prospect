@@ -23,11 +23,12 @@ export async function POST(req: Request, { params }: Ctx) {
     .maybeSingle();
   if (!campaign) return fail("Campagne introuvable pour cette marque.", 404);
 
-  // NB : les prospects sont un vivier PARTAGÉ entre marques (pas de colonne
-  // brand) : aucun filtrage à faire ici.
+  // Le vivier est cloisonné (0015) : un id de prospect appartenant à une autre
+  // marque est silencieusement ignoré, la campagne ne peut pas le cibler.
   const { data: prospects, error } = await db
     .from("prospects")
     .select("id, email")
+    .eq("brand", brand.slug)
     .in("id", prospectIds);
   if (error) return fail(error.message, 500);
 

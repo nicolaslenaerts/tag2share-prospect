@@ -119,8 +119,10 @@ export type ContactInfo = {
   products: string[];
   /**
    * Autres marques ayant déjà contacté cette adresse. Le vivier de prospects
-   * est partagé : un business démarché par une marque peut légitimement l'être
-   * par une autre, mais l'opérateur doit le voir avant d'envoyer.
+   * est cloisonné, mais le journal ne l'est pas pour cette lecture : un même
+   * commerce a une fiche par marque, et l'opérateur doit voir qu'une autre
+   * marque a déjà écrit à cette adresse avant d'envoyer. Rapprochement par
+   * EMAIL, seul point commun entre deux fiches désormais distinctes.
    */
   otherBrands: string[];
 };

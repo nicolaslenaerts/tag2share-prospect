@@ -40,7 +40,8 @@ export async function GET(req: Request, { params }: Ctx) {
   // Segment porteur du produit, résolu EXACTEMENT comme à l'envoi (segment de
   // la campagne, donc de sa marque). L'aperçu de l'UI montre ainsi le produit
   // qui partira réellement, et non le segment d'origine du prospect - qui peut
-  // appartenir à une autre marque, le vivier étant partagé.
+  // appartenir à une autre marque sur les données antérieures au cloisonnement
+  // du vivier (migration 0015).
   const resolvedSegments = await resolveProspectSegments(
     db,
     id,
@@ -58,7 +59,8 @@ export async function GET(req: Request, { params }: Ctx) {
   // adresse email, d'après le journal immuable des envois réussis. Permet de les
   // regrouper dans la vue avant même toute tentative d'envoi.
   //
-  // Le vivier de prospects étant partagé entre marques, on distingue :
+  // Le vivier est cloisonné, mais le journal se lit par ADRESSE : un même
+  // commerce a une fiche par marque et une seule boîte mail. On distingue donc :
   //  - "déjà contacté" = par CETTE marque (bloquant à l'envoi),
   //  - other_brands    = par une autre marque (information, non bloquant).
   const emailsForCheck = Array.from(

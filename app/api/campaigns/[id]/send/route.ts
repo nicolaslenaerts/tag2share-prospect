@@ -79,9 +79,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (error) return fail(error.message, 500);
 
   // Produit mis en avant : résolu depuis un segment DE CETTE MARQUE auquel le
-  // prospect est rattaché. Le vivier de prospects étant partagé entre marques,
-  // prospects.segment_id (segment d'origine) peut pointer vers un segment
-  // d'une autre marque : s'y fier afficherait le produit d'une autre marque.
+  // prospect est rattaché. On passe par les segments de la campagne plutôt que
+  // par prospects.segment_id, qui peut encore pointer vers un segment d'une
+  // autre marque sur les données antérieures à la migration 0015.
   const segmentByProspect = await resolveProspectSegments(
     db,
     id,
@@ -113,7 +113,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   // journal immuable, source de vérité. On ne renvoie jamais à une adresse déjà
   // jointe par un envoi réussi de cette marque, même via une autre campagne ou
   // un autre prospect partageant la même adresse. Un envoi d'une AUTRE marque
-  // ne bloque pas : le vivier est partagé, les marques sont distinctes.
+  // ne bloque pas : les marques démarchent chacune pour leur compte, et le
+  // journal reste la seule table où leurs chemins se croisent (par email).
   // Cet ensemble est aussi enrichi au fil de l'envoi pour bloquer les doublons
   // présents dans le lot courant (ex. deux prospects avec le même email).
   const normalizedEmails = Array.from(new Set(emails.map(normEmail).filter(Boolean)));
@@ -138,6 +139,20 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       results.push({ id: r.id, skipped: "non approuvé" });
       continue;
     }
+
+    // Garde-fou de cloisonnement : le vivier appartient à une marque depuis la
+    // migration 0015, qui laisse volontairement en place les destinataires
+    // inter-marques créés avant elle (une campagne envoyée est une archive).
+    // Ils ne doivent pas partir sous l'identité de cette marque-ci.
+    if (r.prospect && r.prospect.brand && r.prospect.brand !== brand.slug) {
+      await db
+        .from("campaign_recipients")
+        .update({ status: "skipped", error: "prospect d'une autre marque" })
+        .eq("id", r.id);
+      results.push({ id: r.id, skipped: "prospect d'une autre marque" });
+      continue;
+    }
+
     const to = r.to_email || r.prospect?.email;
     if (!to) {
       results.push({ id: r.id, skipped: "pas d'email" });

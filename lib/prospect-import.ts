@@ -2,11 +2,13 @@
  * Import de prospects depuis un fichier : normalisation, déduplication et
  * politique de fusion.
  *
- * ⚠️ Le vivier `prospects` est PARTAGÉ entre les marques et dédoublonné en base
- * par `place_id` (unique). Une ligne de CSV n'a pas de place_id, et Postgres
- * autorise autant de NULL qu'on veut dans un index unique : l'upsert utilisé
- * par la recherche Places ne protège donc RIEN ici. La déduplication d'un
- * import est entièrement applicative, c'est le rôle de ce fichier.
+ * ⚠️ Le vivier `prospects` est cloisonné par marque et dédoublonné en base par
+ * `(brand, place_id)` (unique, migration 0015). Une ligne de CSV n'a pas de
+ * place_id, et Postgres autorise autant de NULL qu'on veut dans un index
+ * unique : l'upsert utilisé par la recherche Places ne protège donc RIEN ici.
+ * La déduplication d'un import est entièrement applicative, c'est le rôle de ce
+ * fichier - et elle s'applique DANS une marque : deux marques peuvent détenir
+ * chacune leur fiche du même commerce, c'est le principe du cloisonnement.
  */
 import { isValidFormat, isRoleAddress } from "./email-validation";
 
@@ -95,6 +97,14 @@ export function identityKeys(p: {
 
 export type RowIssue = { line: number; reason: string };
 
+/** Ce qu'un import a versé dans un segment donné. */
+export type SegmentTally = {
+  id: string;
+  label: string;
+  created: number;
+  merged: number;
+};
+
 /** Compte rendu d'un lot importé, agrégé côté client sur l'ensemble du fichier. */
 export type ImportReport = {
   received: number;
@@ -107,6 +117,8 @@ export type ImportReport = {
   /** Lignes gardées mais dont l'email a été écarté (invalide ou automatique). */
   droppedEmails: number;
   skipped: RowIssue[];
+  /** Détail par segment alimenté (un import peut en viser plusieurs). */
+  segments: SegmentTally[];
   warning?: string;
 };
 

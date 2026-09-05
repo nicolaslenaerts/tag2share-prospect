@@ -42,7 +42,7 @@ type Recipient = {
    * Segment retenu pour {{product_*}}, résolu côté serveur parmi les segments
    * de la campagne (et donc de sa marque) - à utiliser plutôt que
    * prospect.segment, qui est le segment d'ORIGINE, éventuellement d'une autre
-   * marque puisque le vivier de prospects est partagé.
+   * marque sur les données antérieures au cloisonnement du vivier (0015).
    */
   resolved_segment?: Segment | null;
 };

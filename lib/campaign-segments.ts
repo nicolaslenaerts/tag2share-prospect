@@ -1,11 +1,11 @@
 /**
  * Résolution du segment porteur du produit, par prospect.
  *
- * Le vivier de prospects est PARTAGÉ entre les marques (pas de colonne `brand`
- * sur `prospects`), donc `prospects.segment_id` - le segment d'ORIGINE, premier
- * segment où le business a été capté - peut pointer vers un segment d'une AUTRE
- * marque. S'y fier pour résoudre {{product_*}} afficherait le produit d'une
- * marque dans l'email d'une autre.
+ * On ne se fie JAMAIS à `prospects.segment_id` (le segment d'ORIGINE, premier
+ * segment où le business a été capté) : sur les données antérieures à la
+ * migration 0015 - quand le vivier était partagé entre marques - il peut
+ * pointer vers un segment d'une AUTRE marque, et {{product_*}} afficherait
+ * alors le produit d'une marque dans l'email d'une autre.
  *
  * On passe donc toujours par les segments DE LA CAMPAGNE, filtrés sur sa marque.
  */
