@@ -1,11 +1,13 @@
 import { supabaseAdmin } from "@/lib/supabase";
 import { ok, fail } from "@/lib/http";
+import { activeBrand } from "@/lib/brand-context";
 
 export const runtime = "nodejs";
 
 const PAGE_SIZE = 50;
 
-// Journal paginé des emails envoyés (table email_log, append-only).
+// Journal paginé des emails envoyés (table email_log, append-only), restreint
+// à la marque active.
 // Filtres optionnels :
 //   ?page=1            · pagination (50 par page)
 //   ?status=sent|failed
@@ -17,6 +19,7 @@ export async function GET(req: Request) {
   const status = searchParams.get("status");
   const event = searchParams.get("event");
   const q = (searchParams.get("q") || "").trim();
+  const brand = activeBrand(req);
   const db = supabaseAdmin();
 
   const from = (page - 1) * PAGE_SIZE;
@@ -25,6 +28,7 @@ export async function GET(req: Request) {
   let query = db
     .from("email_log")
     .select("*", { count: "exact" })
+    .eq("brand", brand.slug)
     .order("created_at", { ascending: false })
     .range(from, to);
 

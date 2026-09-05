@@ -9,14 +9,18 @@ export default {
   theme: {
     extend: {
       colors: {
+        // Palette pilotée par les variables CSS posées sur <html> depuis la
+        // marque active (voir lib/brands/theme.ts). Une couleur littérale
+        // serait compilée une fois pour toutes et donc partagée par toutes
+        // les marques. Les valeurs de repli vivent dans app/globals.css.
         brand: {
-          DEFAULT: "#144A66",
+          DEFAULT: "rgb(var(--brand) / <alpha-value>)",
           fg: "#FFFFFF",
-          50: "#eef4f8",
-          100: "#d4e3ec",
-          600: "#144A66",
-          700: "#103b52",
-          900: "#0a2738",
+          50: "rgb(var(--brand-50) / <alpha-value>)",
+          100: "rgb(var(--brand-100) / <alpha-value>)",
+          600: "rgb(var(--brand) / <alpha-value>)",
+          700: "rgb(var(--brand-700) / <alpha-value>)",
+          900: "rgb(var(--brand-900) / <alpha-value>)",
         },
       },
       fontFamily: {

@@ -1,11 +1,11 @@
 "use client";
 import { useState } from "react";
-import Link from "next/link";
 import { Segments } from "@/components/steps/Segments";
 import { Search } from "@/components/steps/Search";
 import { Prospects } from "@/components/steps/Prospects";
 import { Campaign } from "@/components/steps/Campaign";
 import { cn } from "@/components/ui";
+import { AppHeader } from "@/components/AppHeader";
 
 const STEPS = [
   { n: 1, label: "Types de business", hint: "L'IA propose · vous validez" },
@@ -19,29 +19,13 @@ export default function Home() {
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-8">
-      <header className="mb-8 flex items-center gap-3">
-        <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-brand text-white font-bold">
-          T2
-        </div>
-        <div>
-          <h1 className="text-xl font-bold text-gray-900">Tag2Share - Prospection</h1>
-          <p className="text-sm text-gray-500">
-            Trouver des business pour vos objets connectés (porte-clé, carte, présentoir)
-          </p>
-        </div>
-        <Link
-          href="/emails"
-          className="ml-auto rounded-lg border border-gray-200 px-3 py-2 text-sm font-semibold text-gray-700 hover:border-brand/50"
-        >
-          Emails envoyés
-        </Link>
-        <Link
-          href="/suppressions"
-          className="rounded-lg border border-gray-200 px-3 py-2 text-sm font-semibold text-gray-700 hover:border-brand/50"
-        >
-          Liste de suppression
-        </Link>
-      </header>
+      <AppHeader
+        links={[
+          { href: "/emails", label: "Emails envoyés" },
+          { href: "/suppressions", label: "Liste de suppression" },
+          { href: "/reglages", label: "Réglages" },
+        ]}
+      />
 
       <nav className="mb-8 grid grid-cols-2 gap-2 sm:grid-cols-4">
         {STEPS.map((s) => (

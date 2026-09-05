@@ -2,7 +2,8 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { Button, Card, Input, Badge, Spinner } from "@/components/ui";
-import { PRODUCT_LIST, normalizeProductKey } from "@/lib/products";
+import { normalizeProductKey } from "@/lib/products";
+import { useBrand } from "@/components/BrandProvider";
 
 type Suggested = {
   label: string;
@@ -11,7 +12,6 @@ type Suggested = {
   search_terms: string[];
   _selected?: boolean;
 };
-type ProductKey = "keyring" | "card" | "stand";
 type Segment = {
   id: string;
   label: string;
@@ -23,8 +23,14 @@ type Segment = {
 };
 
 export function Segments({ onNext }: { onNext: () => void }) {
+  const brand = useBrand();
+  const products = brand.products;
   const [country, setCountry] = useState("Belgique");
-  const [product, setProduct] = useState<ProductKey>("stand");
+  // Produit proposé par défaut : le dernier du catalogue de la marque (pour
+  // Tag2Share, le présentoir - le plus vendeur en prospection à froid).
+  const [product, setProduct] = useState<string>(
+    products[products.length - 1]?.key ?? ""
+  );
   const [hint, setHint] = useState("");
   const [loading, setLoading] = useState(false);
   const [suggestions, setSuggestions] = useState<Suggested[]>([]);
@@ -48,7 +54,11 @@ export function Segments({ onNext }: { onNext: () => void }) {
         json: { country, product, hint, count: 8 },
       });
       setSuggestions(
-        r.segments.map((s) => ({ ...s, product: normalizeProductKey(s.product) || product, _selected: true }))
+        r.segments.map((s) => ({
+          ...s,
+          product: normalizeProductKey(brand, s.product) || product,
+          _selected: true,
+        }))
       );
     } catch (e) {
       setError((e as Error).message);
@@ -84,10 +94,10 @@ export function Segments({ onNext }: { onNext: () => void }) {
             <span className="mb-1 block font-medium text-gray-600">Produit à vendre</span>
             <select
               value={product}
-              onChange={(e) => setProduct(e.target.value as ProductKey)}
+              onChange={(e) => setProduct(e.target.value)}
               className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
             >
-              {PRODUCT_LIST.map((p) => (
+              {products.map((p) => (
                 <option key={p.key} value={p.key}>
                   {p.name}
                 </option>
@@ -124,7 +134,7 @@ export function Segments({ onNext }: { onNext: () => void }) {
         <Card className="p-5">
           <div className="mb-3 flex items-center justify-between">
             <h3 className="font-bold">
-              Business pour : {PRODUCT_LIST.find((p) => p.key === product)?.name}
+              Business pour : {products.find((p) => p.key === product)?.name}
             </h3>
             <Button onClick={saveSelected}>
               Valider la sélection ({suggestions.filter((s) => s._selected).length})
@@ -184,7 +194,9 @@ function SavedSegment({
   onChange: () => void;
   onRemove: () => void;
 }) {
-  const [product, setProduct] = useState(normalizeProductKey(seg.product));
+  const brand = useBrand();
+  const products = brand.products;
+  const [product, setProduct] = useState(normalizeProductKey(brand, seg.product));
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState("");
 
@@ -202,7 +214,7 @@ function SavedSegment({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <span className="font-semibold">{seg.label}</span>{" "}
-          <Badge color="blue">{PRODUCT_LIST.find((p) => p.key === product)?.name}</Badge>
+          <Badge color="blue">{products.find((p) => p.key === product)?.name}</Badge>
           <p className="text-xs text-gray-400">{seg.search_terms?.join(", ")}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -214,7 +226,7 @@ function SavedSegment({
               disabled={saving}
               className="ml-2 rounded-lg border border-gray-300 px-2 py-1 text-sm"
             >
-              {PRODUCT_LIST.map((p) => (
+              {products.map((p) => (
                 <option key={p.key} value={p.key}>
                   {p.name}
                 </option>

@@ -3,8 +3,10 @@
 import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Lock } from "lucide-react";
+import { useBrand } from "@/components/BrandProvider";
 
 function LoginForm() {
+  const brand = useBrand();
   const router = useRouter();
   const params = useSearchParams();
   const from = params.get("from") || "/";
@@ -47,7 +49,7 @@ function LoginForm() {
           <div className="h-12 w-12 rounded-full bg-brand flex items-center justify-center mb-3">
             <Lock className="h-6 w-6 text-brand-fg" />
           </div>
-          <h1 className="text-lg font-semibold text-brand-900">Tag2Share — Prospection</h1>
+          <h1 className="text-lg font-semibold text-brand-900">{brand.name} - Prospection</h1>
           <p className="text-sm text-gray-500 mt-1">Accès réservé.</p>
         </div>
 

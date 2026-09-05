@@ -1,6 +1,7 @@
 import { geminiJSON } from "@/lib/gemini";
 import { getProduct } from "@/lib/products";
 import { ok, fail, readJson } from "@/lib/http";
+import { activeBrand } from "@/lib/brand-context";
 
 export const runtime = "nodejs";
 
@@ -11,8 +12,9 @@ type SuggestedSegment = {
 };
 
 /**
- * Étape 1 - l'utilisateur choisit UN produit ; l'IA propose des types de business
- * qui auraient le plus à gagner à utiliser CE produit.
+ * Étape 1 - l'utilisateur choisit UN produit du catalogue de la marque active ;
+ * l'IA propose des types de business qui auraient le plus à gagner à utiliser
+ * CE produit. Le positionnement de la marque est injecté dans le prompt.
  */
 export async function POST(req: Request) {
   const { country, hint, count, product } = await readJson<{
@@ -22,17 +24,20 @@ export async function POST(req: Request) {
     product?: string;
   }>(req);
 
+  const brand = activeBrand(req);
   const n = Math.min(Math.max(count || 8, 3), 15);
   const zone = country || "Belgique";
-  const p = getProduct(product);
+  const p = getProduct(brand, product);
 
-  const prompt = `Tu es expert en prospection B2B pour Tag2Share.
+  const prompt = `Tu es expert en prospection B2B pour ${brand.name}.
 
-Produit à vendre : ${p.name} (${p.price}) - objet connecté NFC + QR code.
+${brand.ai.positioning}
+
+Produit à vendre : ${p.name} (${p.price}).
 ${p.description}
 Angle : ${p.pitch}
 
-Propose ${n} TYPES de business locaux (en ${zone}) qui auraient le plus à gagner à utiliser CE produit précis (collecte d'avis Google, partage de coordonnées/menu, présence réseaux sociaux, mise en avant en boutique).
+Propose ${n} TYPES de business locaux (en ${zone}) qui auraient le plus à gagner à utiliser CE produit précis.
 ${hint ? `Contrainte supplémentaire de l'utilisateur : ${hint}.` : ""}
 
 Pour chaque type, donne :

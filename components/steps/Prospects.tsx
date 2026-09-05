@@ -27,6 +27,8 @@ type Prospect = {
   emailed_at?: string | null;
   emailed_campaigns?: string[];
   emailed_products?: string[];
+  /** Autres marques ayant déjà contacté cette adresse (vivier partagé). */
+  other_brands?: string[];
   suppressed?: boolean;
   suppression_reason?: string | null;
 };
@@ -742,6 +744,17 @@ export function Prospects({ onNext }: { onNext: () => void }) {
                             }
                           >
                             <Badge color="amber">✉ déjà contacté</Badge>
+                          </span>
+                        )}
+                        {!!p.other_brands?.length && (
+                          <span
+                            title={
+                              "Déjà contacté par une autre marque : " +
+                              p.other_brands.join(", ") +
+                              ". Non bloquant : le vivier de prospects est partagé."
+                            }
+                          >
+                            <Badge>↔ {p.other_brands.join(", ")}</Badge>
                           </span>
                         )}
                         {p.suppressed && (

@@ -6,12 +6,12 @@ import {
   MERGE_FIELDS,
   renderMerge,
   mergeDataFromProspect,
-  DEFAULT_TAGLINE,
   buildRecipientEmail,
   slugify,
   requiredProspectFields,
 } from "@/lib/email";
-import { getProduct, normalizeProductKey, PRODUCT_LIST } from "@/lib/products";
+import { getProduct, normalizeProductKey } from "@/lib/products";
+import { useBrand } from "@/components/BrandProvider";
 
 type Segment = { id: string; label?: string; product?: string };
 type Campaign = {
@@ -35,6 +35,15 @@ type Recipient = {
   suppressed?: boolean; suppression_reason?: string | null;
   emailed?: boolean; emailed_at?: string | null;
   emailed_campaigns?: string[]; emailed_products?: string[];
+  /** Autres marques ayant déjà contacté cette adresse (information). */
+  other_brands?: string[];
+  /**
+   * Segment retenu pour {{product_*}}, résolu côté serveur parmi les segments
+   * de la campagne (et donc de sa marque) - à utiliser plutôt que
+   * prospect.segment, qui est le segment d'ORIGINE, éventuellement d'une autre
+   * marque puisque le vivier de prospects est partagé.
+   */
+  resolved_segment?: Segment | null;
 };
 
 const SUPPRESSION_LABEL: Record<string, string> = {
@@ -207,9 +216,12 @@ function CampaignEditor({
   allSegments: Segment[];
   onBack: () => void; reload: () => void; msg: string; setMsg: (s: string) => void;
 }) {
+  const brand = useBrand();
   const [subject, setSubject] = useState(campaign.subject);
   const [body, setBody] = useState(campaign.body_html);
-  const [tagline, setTagline] = useState(campaign.email_tagline ?? DEFAULT_TAGLINE);
+  const [tagline, setTagline] = useState(
+    campaign.email_tagline ?? brand.defaults.tagline
+  );
   const [product, setProduct] = useState(campaign.product ?? "");
   const [utmSource, setUtmSource] = useState(campaign.utm_source ?? "");
   const [utmMedium, setUtmMedium] = useState(campaign.utm_medium ?? "");
@@ -261,6 +273,7 @@ function CampaignEditor({
     prospects[0] || { name: "Le Petit Café", city: "Bruxelles", contact_name: "Marie Dupont" };
   // Aperçu : produit cible de la campagne s'il est défini, sinon produit du segment de l'exemple.
   const data = mergeDataFromProspect(
+    brand,
     sample as any,
     undefined,
     product || (sample as any).segment?.product
@@ -362,12 +375,12 @@ function CampaignEditor({
 
   // Produits proposés pour le test = ceux des segments de la campagne (sinon tous).
   const productKeys = Array.from(
-    new Set(campaignSegments.map((s) => normalizeProductKey(s.product)))
+    new Set(campaignSegments.map((s) => normalizeProductKey(brand, s.product)))
   );
   const testProducts =
     productKeys.length > 0
-      ? productKeys.map((k) => getProduct(k))
-      : PRODUCT_LIST;
+      ? productKeys.map((k) => getProduct(brand, k))
+      : brand.products;
 
   // Envoyables : approuvés et jamais contactés (le serveur re-vérifie de toute façon).
   const approved = recipients.filter(
@@ -478,7 +491,7 @@ function CampaignEditor({
             className="mb-1 w-full rounded-lg border border-gray-300 px-2 py-2 text-sm"
           >
             <option value="">Auto (produit du segment de chaque prospect)</option>
-            {PRODUCT_LIST.map((p) => (
+            {brand.products.map((p) => (
               <option key={p.key} value={p.key}>
                 {p.name} ({p.price})
               </option>
@@ -505,7 +518,7 @@ function CampaignEditor({
 
           <div className="mt-3 rounded-lg border border-gray-200 bg-gray-50 p-3">
             <label className="mb-1 block text-xs font-medium text-gray-600">
-              Paramètres UTM (liens tag2share.com)
+              Paramètres UTM (liens {brand.domains.join(", ")})
             </label>
             <div className="grid gap-2 sm:grid-cols-3">
               <Input
@@ -525,7 +538,7 @@ function CampaignEditor({
               />
             </div>
             <p className="mt-1 text-[11px] text-gray-400">
-              Ajoutés automatiquement à chaque lien tag2share.com de l'email
+              Ajoutés automatiquement à chaque lien de la marque dans l'email
               (<code>utm_source</code>, <code>utm_medium</code>, <code>utm_campaign</code> ;
               <code>utm_content</code> = produit mis en avant). Laisser vide pour les valeurs
               par défaut.
@@ -1104,11 +1117,13 @@ function RecipientRow({
   sendTest: (r: Recipient, testEmail: string) => void;
   remove: (r: Recipient) => void;
 }) {
+  const brand = useBrand();
   const [testEmail, setTestEmail] = useState("");
   const [cs, setCs] = useState(r.custom_subject || "");
   const [ch, setCh] = useState(r.custom_html || "");
-  // Produit affiché = produit cible de la campagne s'il est défini, sinon segment d'origine (comme à l'envoi).
-  const product = getProduct(campaign.product || r.prospect.segment?.product);
+  // Produit affiché = produit cible de la campagne s'il est défini, sinon celui
+  // du segment résolu côté serveur (même règle qu'à l'envoi réel).
+  const product = getProduct(brand, campaign.product || r.resolved_segment?.product);
   // Email déjà traité (envoyé, échoué) ou adresse déjà contactée ailleurs : plus
   // d'édition/test/approbation, seulement un aperçu.
   const contacted = isAlreadyContacted(r);
@@ -1117,10 +1132,11 @@ function RecipientRow({
   // Aperçu du mail tel qu'il (sera) envoyé — rendu identique à l'envoi réel,
   // hors lien de désinscription signé (placeholder en aperçu).
   const preview = buildRecipientEmail({
+    brand,
     campaign,
     recipient: { custom_subject: r.custom_subject, custom_html: r.custom_html },
     prospect: r.prospect,
-    segment: r.prospect.segment,
+    segment: r.resolved_segment ?? null,
     unsubscribeUrl: "#",
   });
 
@@ -1155,6 +1171,17 @@ function RecipientRow({
                 }
               >
                 <Badge color="amber">↩ déjà contacté</Badge>
+              </span>
+            )}
+            {!!r.other_brands?.length && (
+              <span
+                title={
+                  "Déjà contacté par une autre marque : " +
+                  r.other_brands.join(", ") +
+                  ". Non bloquant : l'envoi reste possible sous cette marque."
+                }
+              >
+                <Badge>↔ {r.other_brands.join(", ")}</Badge>
               </span>
             )}
           </div>

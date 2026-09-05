@@ -1,8 +1,9 @@
 import { supabaseAdmin } from "@/lib/supabase";
 import { resendClient } from "@/lib/resend";
 import { recordEmailEvent } from "@/lib/email-log";
-import { normEmail } from "@/lib/suppression";
+import { normEmail, GLOBAL_SCOPE } from "@/lib/suppression";
 import { ok, fail } from "@/lib/http";
+import { activeBrand } from "@/lib/brand-context";
 
 export const runtime = "nodejs";
 
@@ -31,10 +32,12 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
  * Calcule les taux de délivrabilité par campagne sur les emails envoyés ces
- * 6 derniers jours. Rafraîchit d'abord le dernier événement de chaque email
- * éligible depuis l'API Resend, puis agrège.
+ * 6 derniers jours, POUR LA MARQUE ACTIVE. Rafraîchit d'abord le dernier
+ * événement de chaque email éligible depuis l'API Resend (compte unique,
+ * partagé par toutes les marques), puis agrège.
  */
-export async function POST() {
+export async function POST(req: Request) {
+  const brand = activeBrand(req);
   const db = supabaseAdmin();
   const since = new Date(Date.now() - WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
 
@@ -42,6 +45,7 @@ export async function POST() {
   const { data: rows, error } = await db
     .from("email_log")
     .select("id, campaign_id, campaign_name, to_email, resend_id, event, created_at")
+    .eq("brand", brand.slug)
     .eq("status", "sent")
     .gte("created_at", since)
     .order("created_at", { ascending: false });
@@ -69,7 +73,8 @@ export async function POST() {
           const mapped = last ? EVENT_MAP[last] : undefined;
           if (mapped) {
             liveEvent.set(r.resend_id as string, mapped);
-            await recordEmailEvent(r.resend_id as string, mapped); // pas de rétrogradation
+            // pas de rétrogradation
+            await recordEmailEvent(r.resend_id as string, mapped, brand.slug);
             refreshed++;
           }
         } catch {
@@ -90,6 +95,7 @@ export async function POST() {
       .from("suppressions")
       .select("email")
       .eq("reason", "unsubscribe")
+      .in("brand", [brand.slug, GLOBAL_SCOPE])
       .in("email", emailsInWindow);
     for (const s of sup ?? []) unsubscribedSet.add(normEmail(s.email));
   }

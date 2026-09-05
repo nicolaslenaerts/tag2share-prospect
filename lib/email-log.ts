@@ -2,9 +2,9 @@
  * Journal des emails envoyés (table email_log, append-only).
  *
  * Chaque email RÉELLEMENT envoyé à un prospect y crée une ligne, avec toutes
- * les infos figées au moment de l'envoi (campagne, segment, produit mis en
- * avant, sujet, résultat). C'est la base pour savoir si un prospect a déjà été
- * contacté, par quelle campagne et avec quel produit.
+ * les infos figées au moment de l'envoi (marque, campagne, segment, produit
+ * mis en avant, sujet, résultat). C'est la base pour savoir si un prospect a
+ * déjà été contacté, par quelle marque, quelle campagne et avec quel produit.
  *
  * Le logging ne doit JAMAIS faire échouer un envoi : toutes les écritures
  * avalent leurs erreurs (console.error) au lieu de les propager.
@@ -12,11 +12,13 @@
 import { supabaseAdmin } from "./supabase";
 import { getProduct } from "./products";
 import { normEmail } from "./suppression";
+import type { BrandConfig } from "./brands/types";
 
 export type EmailLogStatus = "sent" | "failed";
 
 /** Enregistre un envoi (succès ou échec) dans le journal. Ne lève jamais. */
 export async function logEmailSend(args: {
+  brand: BrandConfig;
   prospect?: Record<string, any> | null;
   campaign?: Record<string, any> | null;
   recipient?: Record<string, any> | null;
@@ -30,9 +32,13 @@ export async function logEmailSend(args: {
 }): Promise<void> {
   try {
     // Produit mis en avant : override campagne prioritaire, sinon segment. Figé ici.
-    const product = getProduct(args.campaign?.product || args.segment?.product);
+    const product = getProduct(
+      args.brand,
+      args.campaign?.product || args.segment?.product
+    );
     const db = supabaseAdmin();
     const { error } = await db.from("email_log").insert({
+      brand: args.brand.slug,
       prospect_id: args.prospect?.id ?? null,
       campaign_id: args.campaign?.id ?? null,
       recipient_id: args.recipient?.id ?? null,
@@ -78,15 +84,17 @@ const EVENT_RANK: Record<string, number> = {
  */
 export async function recordEmailEvent(
   resendId: string | null | undefined,
-  event: string
+  event: string,
+  brandSlug?: string
 ): Promise<void> {
   if (!resendId || !(event in EVENT_RANK)) return;
   try {
     const db = supabaseAdmin();
-    const { data: rows } = await db
-      .from("email_log")
-      .select("id, event")
-      .eq("resend_id", resendId);
+    let q = db.from("email_log").select("id, event").eq("resend_id", resendId);
+    // Deux marques peuvent utiliser deux comptes Resend distincts : on ne
+    // touche que les lignes de la marque concernée quand elle est connue.
+    if (brandSlug) q = q.eq("brand", brandSlug);
+    const { data: rows } = await q;
     for (const row of rows ?? []) {
       const currentRank = row.event ? EVENT_RANK[row.event] ?? 0 : 0;
       if (EVENT_RANK[event] < currentRank) continue; // ne pas rétrograder
@@ -109,6 +117,12 @@ export type ContactInfo = {
   campaigns: string[];
   /** Produits mis en avant lors des envois réussis, dédupliqués. */
   products: string[];
+  /**
+   * Autres marques ayant déjà contacté cette adresse. Le vivier de prospects
+   * est partagé : un business démarché par une marque peut légitimement l'être
+   * par une autre, mais l'opérateur doit le voir avant d'envoyer.
+   */
+  otherBrands: string[];
 };
 
 /**
@@ -118,9 +132,12 @@ export type ContactInfo = {
  * prospect a été ré-importé avec un nouvel id, ou si la campagne a été supprimée.
  *
  * Seuls les envois "sent" comptent ; les échecs ("failed") ne valent pas contact.
+ * Le résultat est relatif à `brandSlug` : les envois des autres marques sont
+ * remontés séparément dans `otherBrands`.
  */
 export async function contactHistory(
-  prospects: Array<{ id: string; email?: string | null }>
+  prospects: Array<{ id: string; email?: string | null }>,
+  brandSlug: string
 ): Promise<Map<string, ContactInfo>> {
   const map = new Map<string, ContactInfo>();
   const ids = Array.from(new Set(prospects.map((p) => p.id).filter(Boolean)));
@@ -136,7 +153,7 @@ export async function contactHistory(
     filters.push(`to_email.in.(${emails.map((e) => `"${e}"`).join(",")})`);
   const { data } = await db
     .from("email_log")
-    .select("prospect_id, to_email, campaign_name, product_name, created_at")
+    .select("prospect_id, to_email, campaign_name, product_name, created_at, brand")
     .eq("status", "sent")
     .or(filters.join(","));
 
@@ -150,6 +167,7 @@ export async function contactHistory(
     emailedAt: null,
     campaigns: [],
     products: [],
+    otherBrands: [],
   });
 
   for (const row of data ?? []) {
@@ -160,6 +178,13 @@ export async function contactHistory(
       null;
     if (!pid) continue;
     const cur = map.get(pid) ?? blank();
+    // Une ligne d'une AUTRE marque ne rend pas le prospect "déjà contacté"
+    // pour la marque courante : elle est seulement signalée.
+    if (row.brand && row.brand !== brandSlug) {
+      if (!cur.otherBrands.includes(row.brand)) cur.otherBrands.push(row.brand);
+      map.set(pid, cur);
+      continue;
+    }
     cur.emailed = true;
     if (row.created_at && (!cur.emailedAt || row.created_at < cur.emailedAt))
       cur.emailedAt = row.created_at;

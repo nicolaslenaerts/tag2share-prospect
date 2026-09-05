@@ -1,6 +1,7 @@
 import { geminiJSON } from "@/lib/gemini";
 import { getProduct } from "@/lib/products";
 import { ok, fail, readJson } from "@/lib/http";
+import { activeBrand } from "@/lib/brand-context";
 
 export const runtime = "nodejs";
 
@@ -17,9 +18,12 @@ export async function POST(req: Request) {
   }>(req);
   if (!label) return fail("label requis.");
 
-  const p = getProduct(product);
+  const brand = activeBrand(req);
+  const p = getProduct(brand, product);
 
-  const prompt = `Tu es copywriter B2B pour Tag2Share. Rédige un email de prospection à froid, en français, percutant et orienté marketing.
+  const prompt = `Tu es copywriter B2B pour ${brand.name}. Rédige un email de prospection à froid, en français, percutant et orienté marketing.
+
+MARQUE : ${brand.ai.positioning}
 
 CIBLE : des "${label}".${rationale ? ` Contexte : ${rationale}.` : ""}
 PRODUIT MIS EN AVANT : ${p.name}. ${p.description}
@@ -35,7 +39,7 @@ CONTRAINTES :
   <table cellpadding="0" cellspacing="0" style="margin:20px auto;"><tr><td style="border-radius:8px;background:rgb(20,74,102);"><a href="${p.shopUrl}" style="display:inline-block;padding:14px 30px;color:#ffffff;text-decoration:none;font-weight:700;">Découvrir le ${p.name}</a></td></tr></table>
 - Inclus aussi un LIEN texte bien visible vers le CONFIGURATEUR : <a href="${p.configUrl}">personnaliser votre ${p.name}</a> (les liens seront mis en couleur automatiquement).
 - Termine le corps par une ligne contenant EXACTEMENT le token {{products_more}} (un encart "autres produits" y sera inséré automatiquement), juste avant la signature.
-- Ton chaleureux, concret, sans jargon. 130-200 mots. Termine par "L'équipe Tag2Share".
+- Ton chaleureux, concret, sans jargon. 130-200 mots. Termine par "${brand.ai.signature}".
 - Sujet court et accrocheur (max ~60 caractères), peut contenir {{name}}.
 
 Réponds en JSON STRICT : {"subject": "...", "body": "<p>...</p>"}`;

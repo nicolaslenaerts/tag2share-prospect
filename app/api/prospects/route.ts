@@ -2,16 +2,24 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { ok, fail, readJson } from "@/lib/http";
 import { suppressionMap, normEmail } from "@/lib/suppression";
 import { contactHistory } from "@/lib/email-log";
+import { activeBrand } from "@/lib/brand-context";
 
 export const runtime = "nodejs";
 
 // Liste des prospects (filtre optionnel par segment, via l'appartenance multi-segment).
+//
+// Le vivier de prospects est PARTAGÉ entre les marques : la liste n'est donc
+// pas filtrée par marque. En revanche tout ce qui est relatif à la marque
+// active l'est : segments rattachés, exclusions, historique de contact.
+//
 // Chaque prospect est enrichi de :
-//  - segments[] : tous les segments auxquels il est rattaché
-//  - emailed / emailed_at / emailed_campaigns : un mail lui a-t-il déjà été envoyé (toutes campagnes)
+//  - segments[] : ses segments DANS la marque active
+//  - emailed / emailed_at / emailed_campaigns : déjà contacté par CETTE marque
+//  - other_brands : autres marques l'ayant déjà contacté (information)
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const segmentId = searchParams.get("segmentId");
+  const brand = activeBrand(req);
   const db = supabaseAdmin();
 
   // Restriction optionnelle aux membres d'un segment.
@@ -43,11 +51,13 @@ export async function GET(req: Request) {
     const slice = ids.slice(i, i + CHUNK);
     const { data: memberships, error: mErr } = await db
       .from("segment_prospects")
-      .select("prospect_id, segment:segments(id, label, product)")
+      .select("prospect_id, segment:segments(id, label, product, brand)")
       .in("prospect_id", slice);
     if (mErr) return fail(mErr.message, 500);
     for (const m of memberships ?? []) {
       if (!m.segment) continue;
+      // Les segments des autres marques ne concernent pas cette vue.
+      if ((m.segment as any).brand !== brand.slug) continue;
       const arr = segByProspect.get(m.prospect_id) ?? [];
       arr.push(m.segment);
       segByProspect.set(m.prospect_id, arr);
@@ -56,13 +66,15 @@ export async function GET(req: Request) {
 
   // Désinscriptions / bounces / plaintes (liste de suppression).
   const suppressed = await suppressionMap(
-    (prospects ?? []).map((p) => p.email).filter(Boolean)
+    (prospects ?? []).map((p) => p.email).filter(Boolean),
+    brand.slug
   );
 
   // "Déjà contacté" : lu depuis le journal des emails envoyés (source de vérité,
   // matché par prospect_id OU email, toutes campagnes confondues).
   const history = await contactHistory(
-    (prospects ?? []).map((p) => ({ id: p.id, email: p.email }))
+    (prospects ?? []).map((p) => ({ id: p.id, email: p.email })),
+    brand.slug
   );
 
   const enriched = (prospects ?? []).map((p) => {
@@ -75,6 +87,7 @@ export async function GET(req: Request) {
       emailed_at: contact?.emailedAt ?? null,
       emailed_campaigns: contact?.campaigns ?? [],
       emailed_products: contact?.products ?? [],
+      other_brands: contact?.otherBrands ?? [],
       suppressed: !!reason,
       suppression_reason: reason,
     };

@@ -1,6 +1,7 @@
 import { searchPlaces, COUNTRY_CODES } from "@/lib/places";
 import { supabaseAdmin } from "@/lib/supabase";
 import { ok, fail, readJson } from "@/lib/http";
+import { activeBrand } from "@/lib/brand-context";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -9,10 +10,12 @@ export const maxDuration = 60;
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const segmentId = searchParams.get("segmentId");
+  const brand = activeBrand(req);
   const db = supabaseAdmin();
   let q = db
     .from("searches")
     .select("*")
+    .eq("brand", brand.slug)
     .order("created_at", { ascending: false })
     .limit(100);
   if (segmentId) q = q.eq("segment_id", segmentId);
@@ -33,12 +36,14 @@ export async function POST(req: Request) {
   }>(req);
 
   if (!segmentId) return fail("segmentId requis.");
+  const brand = activeBrand(req);
   const db = supabaseAdmin();
 
   const { data: segment, error: segErr } = await db
     .from("segments")
     .select("*")
     .eq("id", segmentId)
+    .eq("brand", brand.slug)
     .single();
   if (segErr || !segment) return fail("Segment introuvable.", 404);
 
@@ -117,6 +122,7 @@ export async function POST(req: Request) {
 
   // Journal de la recherche.
   await db.from("searches").insert({
+    brand: brand.slug,
     segment_id: segmentId,
     country: country ?? null,
     city: city ?? null,

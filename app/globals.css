@@ -2,8 +2,17 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * Palette de repli (marque Tag2Share). Les valeurs réelles sont posées sur
+ * <html> par app/layout.tsx depuis la marque active, en triplets "r g b"
+ * consommés par Tailwind via rgb(var(--brand) / <alpha>).
+ */
 :root {
-  --brand: #144a66;
+  --brand: 20 74 102;
+  --brand-50: 238 244 248;
+  --brand-100: 212 227 236;
+  --brand-700: 16 59 82;
+  --brand-900: 10 39 56;
 }
 
 html,

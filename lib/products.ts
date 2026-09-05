@@ -1,78 +1,81 @@
 /**
- * Catalogue des 3 produits Tag2Share (objets connectés NFC/QR).
- * Source : https://www.tag2share.com/shop/category/objets-connectes-9
- * Sert de contexte à l'IA et alimente les liens (page produit + configurateur) des emails.
+ * Résolution des produits d'une marque (objets vendus, alimentant les tokens
+ * {{product_*}} des emails et le contexte des prompts IA).
+ *
+ * Le catalogue lui-même vit dans lib/brands/<slug>.ts : ce module ne contient
+ * plus que la logique de résolution, désormais relative à une marque.
  */
-export type ProductKey = "card" | "keyring" | "stand";
+import type { BrandConfig, Product } from "./brands/types";
 
-export type Product = {
-  key: ProductKey;
-  name: string;
-  price: string;
-  shopUrl: string;
-  configUrl: string;
-  description: string;
-  pitch: string; // angle marketing principal
-};
+export type { Product };
 
-export const PRODUCTS: Record<ProductKey, Product> = {
-  keyring: {
-    key: "keyring",
-    name: "Porte-clé connecté",
-    price: "14,90 €",
-    shopUrl: "https://www.tag2share.com/shop/objets-connectes-9/porte-cle-connecte-5",
-    configUrl: "https://app.tag2share.com/customize/keyring/",
-    description:
-      "Porte-clé NFC + QR code. Au contact d'un smartphone, il ouvre instantanément une page (profil, menu, avis Google, réseaux sociaux, site web…).",
-    pitch:
-      "votre vitrine toujours sur vous : partagez profil, avis et réseaux en un geste, partout.",
-  },
-  card: {
-    key: "card",
-    name: "Carte de visite connectée",
-    price: "24,90 €",
-    shopUrl:
-      "https://www.tag2share.com/shop/objets-connectes-9/carte-de-visite-connectee-6",
-    configUrl: "https://app.tag2share.com/customize/card/",
-    description:
-      "Carte de visite NFC + QR code. Remplace la carte papier : un tap partage coordonnées, réseaux sociaux et liens. Réutilisable, modifiable à distance.",
-    pitch:
-      "votre réseau en un tap : coordonnées, réseaux et liens partagés instantanément, sans papier.",
-  },
-  stand: {
-    key: "stand",
-    name: "Présentoir connecté",
-    price: "34,90 €",
-    shopUrl: "https://www.tag2share.com/shop/objets-connectes-9/presentoir-connecte-7",
-    configUrl: "https://app.tag2share.com/customize/stand/",
-    description:
-      "Présentoir de comptoir NFC + QR code. Posé en boutique/accueil, il invite les clients à scanner pour laisser un avis Google, suivre les réseaux ou consulter le menu.",
-    pitch:
-      "posé sur le comptoir, irrésistible à scanner : un flux régulier d'avis Google 5★ et d'abonnés.",
-  },
-};
+/**
+ * Clé de produit telle que stockée en base (segments.product,
+ * campaigns.product, email_log.product_key). Libre : chaque marque définit
+ * ses propres clés.
+ */
+export type ProductKey = string;
 
-export const PRODUCT_LIST = Object.values(PRODUCTS);
-
-/** Normalise un label/clé libre vers une clé produit. */
-export function normalizeProductKey(input?: string | null): ProductKey {
-  const s = (input || "").toLowerCase();
-  if (s.includes("card") || s.includes("carte") || s.includes("visite")) return "card";
-  if (s.includes("stand") || s.includes("présentoir") || s.includes("presentoir"))
-    return "stand";
-  return "keyring";
+function deaccent(s: string): string {
+  return s
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim();
 }
 
-export function getProduct(input?: string | null): Product {
-  return PRODUCTS[normalizeProductKey(input)];
+/** Catalogue de la marque. */
+export function productList(brand: BrandConfig): Product[] {
+  return brand.products;
 }
 
-/** Les 2 autres produits (hors produit mis en avant). */
-export function otherProducts(input?: string | null): Product[] {
-  const key = normalizeProductKey(input);
-  return PRODUCT_LIST.filter((p) => p.key !== key);
+/**
+ * Normalise un libellé/clé libre vers une clé produit de CETTE marque.
+ * Ordre de résolution : clé exacte, puis correspondance sur le nom ou un alias,
+ * puis repli sur le premier produit du catalogue.
+ */
+export function normalizeProductKey(
+  brand: BrandConfig,
+  input?: string | null
+): ProductKey {
+  const list = brand.products;
+  if (list.length === 0) {
+    throw new Error(`La marque "${brand.slug}" n'a aucun produit configuré.`);
+  }
+  const raw = (input || "").trim();
+  if (!raw) return list[0].key;
+
+  const exact = list.find((p) => p.key.toLowerCase() === raw.toLowerCase());
+  if (exact) return exact.key;
+
+  const norm = deaccent(raw);
+  for (const p of list) {
+    const candidates = [p.key, p.name, ...(p.aliases ?? [])]
+      .map(deaccent)
+      .filter(Boolean);
+    if (candidates.some((c) => norm.includes(c))) return p.key;
+  }
+  return list[0].key;
 }
 
-export const PRODUCTS_PROMPT = PRODUCT_LIST.map(
-  (p) => `- [${p.key}] ${p.name} (${p.price}) : ${p.description}`
-).join("\n");
+/** Produit mis en avant, résolu depuis un libellé/clé libre. */
+export function getProduct(brand: BrandConfig, input?: string | null): Product {
+  const key = normalizeProductKey(brand, input);
+  return brand.products.find((p) => p.key === key) ?? brand.products[0];
+}
+
+/** Les autres produits du catalogue (hors produit mis en avant). */
+export function otherProducts(
+  brand: BrandConfig,
+  input?: string | null
+): Product[] {
+  const key = normalizeProductKey(brand, input);
+  return brand.products.filter((p) => p.key !== key);
+}
+
+/** Catalogue formaté pour un prompt IA. */
+export function productsPrompt(brand: BrandConfig): string {
+  return brand.products
+    .map((p) => `- [${p.key}] ${p.name} (${p.price}) : ${p.description}`)
+    .join("\n");
+}

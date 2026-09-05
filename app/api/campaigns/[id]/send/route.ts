@@ -6,6 +6,10 @@ import { suppressedSet, normEmail } from "@/lib/suppression";
 import { validateSendable } from "@/lib/email-validation";
 import { unsubscribeUrl } from "@/lib/unsubscribe";
 import { logEmailSend } from "@/lib/email-log";
+import { activeBrand } from "@/lib/brand-context";
+import { getBrand } from "@/lib/brands";
+import { brandSender } from "@/lib/brand-sender";
+import { resolveProspectSegments } from "@/lib/campaign-segments";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -15,10 +19,17 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 /**
  * Envoi RÉEL aux prospects. SÉCURITÉ & délivrabilité :
  * - exige confirm === true, n'envoie qu'aux recipientIds fournis et "approved",
- * - ignore les emails de la liste de suppression (désinscrits / bounces / plaintes),
+ * - l'identité d'envoi est celle de la MARQUE DE LA CAMPAGNE (résolution
+ *   stricte : une marque inconnue fait échouer l'envoi plutôt que d'expédier
+ *   sous une autre identité),
+ * - ignore les emails de la liste de suppression de cette marque (désinscrits /
+ *   bounces / plaintes),
  * - valide chaque adresse (format, no-reply, MX) pour limiter les bounces,
- * - respecte un plafond quotidien (DAILY_SEND_CAP) et un délai entre envois (SEND_DELAY_MS),
- * - ajoute le lien + l'en-tête List-Unsubscribe.
+ * - part de l'adresse d'envoi de la marque (saisie dans /reglages, sinon
+ *   défaut du code) via l'unique compte Resend,
+ * - respecte un plafond quotidien et un délai PROPRES À LA MARQUE (la
+ *   réputation d'envoi se joue par domaine),
+ * - ajoute le lien + l'en-tête List-Unsubscribe signés pour cette marque.
  */
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -33,43 +44,70 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (!Array.isArray(recipientIds) || recipientIds.length === 0)
     return fail("recipientIds requis.");
 
+  const requestBrand = activeBrand(req);
   const db = supabaseAdmin();
   const { data: campaign } = await db
     .from("campaigns")
     .select("*")
     .eq("id", id)
+    .eq("brand", requestBrand.slug)
     .single();
   if (!campaign) return fail("Campagne introuvable.", 404);
 
+  // Identité d'envoi = marque de la campagne, pas celle de la session.
+  let brand;
+  try {
+    brand = getBrand(campaign.brand);
+  } catch (e) {
+    return fail((e as Error).message, 500);
+  }
+  // Identité d'expédition résolue UNE fois : elle reste figée pour tout le
+  // lot, même si quelqu'un l'édite dans /reglages pendant l'envoi.
+  const sender = await brandSender(brand);
+
   const { data: recipients, error } = await db
     .from("campaign_recipients")
-    .select("*, prospect:prospects(*, segment:segments!prospects_segment_id_fkey(*))")
+    .select("*, prospect:prospects(*)")
     .eq("campaign_id", id)
     .in("id", recipientIds);
   if (error) return fail(error.message, 500);
 
-  // Plafond quotidien (0 = illimité) : compte les envois déjà faits aujourd'hui.
-  const dailyCap = Number(process.env.DAILY_SEND_CAP || 0);
-  const delayMs = Number(process.env.SEND_DELAY_MS || 1200);
+  // Produit mis en avant : résolu depuis un segment DE CETTE MARQUE auquel le
+  // prospect est rattaché. Le vivier de prospects étant partagé entre marques,
+  // prospects.segment_id (segment d'origine) peut pointer vers un segment
+  // d'une autre marque : s'y fier afficherait le produit d'une autre marque.
+  const segmentByProspect = await resolveProspectSegments(
+    db,
+    id,
+    brand.slug,
+    (recipients ?? []).map((r) => r.prospect_id).filter(Boolean)
+  );
+
+  // Plafond quotidien PAR MARQUE (0 = illimité), lu dans le journal d'envois.
+  const dailyCap = sender.dailyCap;
+  const delayMs = sender.delayMs;
   let remaining = Infinity;
   if (dailyCap > 0) {
     const startOfDay = new Date();
     startOfDay.setUTCHours(0, 0, 0, 0);
     const { count } = await db
-      .from("campaign_recipients")
+      .from("email_log")
       .select("id", { count: "exact", head: true })
+      .eq("brand", brand.slug)
       .eq("status", "sent")
-      .gte("sent_at", startOfDay.toISOString());
+      .gte("created_at", startOfDay.toISOString());
     remaining = Math.max(0, dailyCap - (count ?? 0));
   }
 
-  // Liste de suppression pour toutes les adresses concernées.
+  // Liste de suppression de cette marque (+ exclusions globales).
   const emails = (recipients ?? []).map((r) => r.to_email || r.prospect?.email || "");
-  const suppressed = await suppressedSet(emails);
+  const suppressed = await suppressedSet(emails, brand.slug);
 
-  // Emails DÉJÀ contactés (toutes campagnes confondues) : journal immuable, source
-  // de vérité. On ne renvoie jamais à une adresse déjà jointe par un envoi réussi,
-  // même via une autre campagne ou un autre prospect partageant la même adresse.
+  // Emails DÉJÀ contactés POUR CETTE MARQUE (toutes campagnes confondues) :
+  // journal immuable, source de vérité. On ne renvoie jamais à une adresse déjà
+  // jointe par un envoi réussi de cette marque, même via une autre campagne ou
+  // un autre prospect partageant la même adresse. Un envoi d'une AUTRE marque
+  // ne bloque pas : le vivier est partagé, les marques sont distinctes.
   // Cet ensemble est aussi enrichi au fil de l'envoi pour bloquer les doublons
   // présents dans le lot courant (ex. deux prospects avec le même email).
   const normalizedEmails = Array.from(new Set(emails.map(normEmail).filter(Boolean)));
@@ -78,6 +116,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const { data: logged } = await db
       .from("email_log")
       .select("to_email")
+      .eq("brand", brand.slug)
       .eq("status", "sent")
       .in("to_email", normalizedEmails);
     for (const row of logged ?? []) alreadyContacted.add(normEmail(row.to_email));
@@ -109,8 +148,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       continue;
     }
 
-    // Déjà contacté (même via une autre campagne / un autre prospect) : on ne
-    // renvoie jamais. Le destinataire bascule dans le groupe « Déjà contactés ».
+    // Déjà contacté par cette marque (même via une autre campagne / un autre
+    // prospect) : on ne renvoie jamais. Le destinataire bascule dans le groupe
+    // « Déjà contactés ».
     if (alreadyContacted.has(normEmail(to))) {
       await db
         .from("campaign_recipients")
@@ -137,17 +177,21 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       continue;
     }
 
-    const unsub = unsubscribeUrl(to);
+    const segment = segmentByProspect.get(r.prospect_id) ?? null;
+    const unsub = unsubscribeUrl(to, brand.slug);
     const { subject, html } = buildRecipientEmail({
+      brand,
       campaign,
       recipient: r,
       prospect: r.prospect,
-      segment: r.prospect?.segment, // produit du segment d'origine
+      segment, // produit du segment de CETTE marque
       unsubscribeUrl: unsub,
     });
 
     try {
       const data = await sendEmail({
+        brand,
+        sender,
         to,
         subject,
         html,
@@ -167,12 +211,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           error: null,
         })
         .eq("id", r.id);
-      // Journal immuable : email envoyé, produit mis en avant + infos figés.
+      // Journal immuable : marque, produit mis en avant + infos figés.
       await logEmailSend({
+        brand,
         prospect: r.prospect,
         campaign,
         recipient: r,
-        segment: r.prospect?.segment,
+        segment,
         toEmail: to,
         subject,
         status: "sent",
@@ -191,10 +236,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         .update({ status: "failed", error: (e as Error).message })
         .eq("id", r.id);
       await logEmailSend({
+        brand,
         prospect: r.prospect,
         campaign,
         recipient: r,
-        segment: r.prospect?.segment,
+        segment,
         toEmail: to,
         subject,
         status: "failed",

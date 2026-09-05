@@ -3,13 +3,17 @@ import { ok, fail, readJson } from "@/lib/http";
 import { buildRecipientEmail, type MergeData } from "@/lib/email";
 import { sendEmail } from "@/lib/resend";
 import { unsubscribeUrl } from "@/lib/unsubscribe";
+import { activeBrand } from "@/lib/brand-context";
+import { getBrand } from "@/lib/brands";
+import { brandSender } from "@/lib/brand-sender";
+import { resolveProspectSegments } from "@/lib/campaign-segments";
 
 export const runtime = "nodejs";
 
 /**
- * Envoie un email de TEST à l'adresse TEST_EMAIL (override du destinataire réel).
- * Permet de vérifier le rendu, avec possibilité de surcharger les données fusionnées.
- * N'envoie JAMAIS au prospect réel.
+ * Envoie un email de TEST à l'adresse de test de la marque (override du
+ * destinataire réel). Permet de vérifier le rendu, avec possibilité de
+ * surcharger les données fusionnées. N'envoie JAMAIS au prospect réel.
  */
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -20,35 +24,57 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   }>(req);
   if (!recipientId) return fail("recipientId requis.");
 
-  const to = testEmail || process.env.TEST_EMAIL;
-  if (!to) return fail("Aucune adresse de test (TEST_EMAIL manquante).");
-
+  const requestBrand = activeBrand(req);
   const db = supabaseAdmin();
   const { data: campaign } = await db
     .from("campaigns")
-    .select("*, segment:segments(*)")
+    .select("*")
     .eq("id", id)
+    .eq("brand", requestBrand.slug)
     .single();
   const { data: recipient } = await db
     .from("campaign_recipients")
-    .select("*, prospect:prospects(*, segment:segments!prospects_segment_id_fkey(*))")
+    .select("*, prospect:prospects(*)")
     .eq("id", recipientId)
+    .eq("campaign_id", id)
     .single();
   if (!campaign || !recipient) return fail("Campagne ou destinataire introuvable.", 404);
 
+  // Identité d'envoi = marque de la campagne.
+  let brand;
+  try {
+    brand = getBrand(campaign.brand);
+  } catch (e) {
+    return fail((e as Error).message, 500);
+  }
+
+  const sender = await brandSender(brand);
+  const to = testEmail || sender.testEmail;
+  if (!to)
+    return fail(
+      "Aucune adresse de test : renseignez-la dans /reglages pour cette marque."
+    );
+
+  // Produit résolu depuis un segment DE CETTE MARQUE, comme à l'envoi réel.
+  const segments = await resolveProspectSegments(db, id, brand.slug, [
+    recipient.prospect_id,
+  ]);
+
   const realEmail = recipient.to_email || recipient.prospect?.email;
   const { subject, html } = buildRecipientEmail({
+    brand,
     campaign,
     recipient,
     prospect: recipient.prospect,
-    // Produit résolu depuis le segment d'origine du prospect.
-    segment: recipient.prospect?.segment,
+    segment: segments.get(recipient.prospect_id) ?? null,
     overrideData,
-    unsubscribeUrl: realEmail ? unsubscribeUrl(realEmail) : null,
+    unsubscribeUrl: realEmail ? unsubscribeUrl(realEmail, brand.slug) : null,
   });
 
   try {
     const data = await sendEmail({
+      brand,
+      sender,
       to,
       subject: `[TEST] ${subject}`,
       html,

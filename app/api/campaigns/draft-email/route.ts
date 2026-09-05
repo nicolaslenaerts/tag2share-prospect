@@ -1,5 +1,7 @@
 import { geminiJSON } from "@/lib/gemini";
 import { ok, fail, readJson } from "@/lib/http";
+import { activeBrand } from "@/lib/brand-context";
+import { productsPrompt } from "@/lib/products";
 
 export const runtime = "nodejs";
 
@@ -15,12 +17,18 @@ export async function POST(req: Request) {
     instruction?: string;
   }>(req);
 
+  const brand = activeBrand(req);
   const cibles = (labels ?? []).filter(Boolean);
   const ciblesTxt = cibles.length
     ? `Types de business ciblés : ${cibles.join(", ")}.`
     : "Cible : petits commerces et prestataires de proximité.";
 
-  const prompt = `Tu es copywriter B2B pour Tag2Share (objets connectés NFC + QR : plus d'avis Google, plus d'abonnés, partage sans contact). Rédige un email de prospection à froid, en français, percutant et orienté marketing, pour une CAMPAGNE pouvant viser plusieurs types de business.
+  const prompt = `Tu es copywriter B2B pour ${brand.name}. Rédige un email de prospection à froid, en français, percutant et orienté marketing, pour une CAMPAGNE pouvant viser plusieurs types de business.
+
+MARQUE : ${brand.ai.positioning}
+
+CATALOGUE (pour ton contexte uniquement, ne cite AUCUN produit en dur) :
+${productsPrompt(brand)}
 
 ${ciblesTxt}
 ${instruction ? `Consigne supplémentaire : ${instruction}` : ""}
@@ -35,7 +43,7 @@ RÈGLES IMPÉRATIVES :
 - Termine le corps par une ligne contenant EXACTEMENT le token {{products_more}}, juste avant la signature.
 - Le corps est du HTML simple (<p>, <ul>, <li>, <strong>, <a>). PAS de <html>/<body>/<style>.
 - N'utilise JAMAIS le tiret cadratin "—". N'indique AUCUN prix.
-- Ton chaleureux, concret, sans jargon. 130-200 mots. Termine par "L'équipe Tag2Share".
+- Ton chaleureux, concret, sans jargon. 130-200 mots. Termine par "${brand.ai.signature}".
 - Sujet court et accrocheur (max ~60 caractères), peut contenir {{name}}.
 
 Réponds en JSON STRICT : {"subject": "...", "body": "<p>...</p>"}`;

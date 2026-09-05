@@ -1,5 +1,6 @@
 import { supabaseAdmin } from "@/lib/supabase";
 import { ok, fail, readJson } from "@/lib/http";
+import { activeBrand } from "@/lib/brand-context";
 
 export const runtime = "nodejs";
 
@@ -12,7 +13,18 @@ export async function POST(req: Request, { params }: Ctx) {
   if (!Array.isArray(prospectIds) || prospectIds.length === 0)
     return fail("prospectIds requis.");
 
+  const brand = activeBrand(req);
   const db = supabaseAdmin();
+  const { data: campaign } = await db
+    .from("campaigns")
+    .select("id")
+    .eq("id", campaignId)
+    .eq("brand", brand.slug)
+    .maybeSingle();
+  if (!campaign) return fail("Campagne introuvable pour cette marque.", 404);
+
+  // NB : les prospects sont un vivier PARTAGÉ entre marques (pas de colonne
+  // brand) : aucun filtrage à faire ici.
   const { data: prospects, error } = await db
     .from("prospects")
     .select("id, email")

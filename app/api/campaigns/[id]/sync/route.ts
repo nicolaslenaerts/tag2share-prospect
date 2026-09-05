@@ -2,6 +2,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { ok, fail } from "@/lib/http";
 import { suppressionMap, normEmail } from "@/lib/suppression";
 import { requiredProspectFields } from "@/lib/email";
+import { activeBrand } from "@/lib/brand-context";
 
 export const runtime = "nodejs";
 
@@ -11,23 +12,28 @@ type Ctx = { params: Promise<{ id: string }> };
 // ciblés qui sont éligibles — email présent, non supprimé, tous les champs requis du
 // template — et pas déjà destinataires (quel que soit leur statut, y compris exclus).
 // Idempotent : peut être appelé à chaque ouverture de campagne.
-export async function POST(_req: Request, { params }: Ctx) {
+export async function POST(req: Request, { params }: Ctx) {
   const { id: campaignId } = await params;
+  const brand = activeBrand(req);
   const db = supabaseAdmin();
 
   const { data: campaign, error: cErr } = await db
     .from("campaigns")
     .select("id, subject, body_html")
     .eq("id", campaignId)
+    .eq("brand", brand.slug)
     .single();
   if (cErr || !campaign) return fail("Campagne introuvable.", 404);
 
-  // Segments ciblés.
+  // Segments ciblés, restreints à la marque de la campagne.
   const { data: segLinks } = await db
     .from("campaign_segments")
-    .select("segment_id")
+    .select("segment:segments(id, brand)")
     .eq("campaign_id", campaignId);
-  const segmentIds = (segLinks ?? []).map((l) => l.segment_id);
+  const segmentIds = (segLinks ?? [])
+    .map((l: any) => l.segment)
+    .filter((sg: any) => sg && sg.brand === brand.slug)
+    .map((sg: any) => sg.id as string);
   if (segmentIds.length === 0) return ok({ added: 0 });
 
   // Prospects rattachés à au moins un de ces segments.
@@ -55,7 +61,8 @@ export async function POST(_req: Request, { params }: Ctx) {
   if (pErr) return fail(pErr.message, 500);
 
   const suppressed = await suppressionMap(
-    (prospects ?? []).map((p) => p.email).filter(Boolean)
+    (prospects ?? []).map((p) => p.email).filter(Boolean),
+    brand.slug
   );
 
   // Mêmes critères d'éligibilité que la liste « Ajouter des destinataires » côté UI.

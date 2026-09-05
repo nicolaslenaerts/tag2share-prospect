@@ -1,14 +1,16 @@
 import { supabaseAdmin } from "@/lib/supabase";
 import { ok, fail, readJson } from "@/lib/http";
-import { DEFAULT_SUBJECT, DEFAULT_BODY, DEFAULT_TAGLINE } from "@/lib/email";
+import { activeBrand } from "@/lib/brand-context";
 
 export const runtime = "nodejs";
 
-export async function GET() {
+export async function GET(req: Request) {
+  const brand = activeBrand(req);
   const db = supabaseAdmin();
   const { data, error } = await db
     .from("campaigns")
     .select("*")
+    .eq("brand", brand.slug)
     .order("created_at", { ascending: false });
   if (error) return fail(error.message, 500);
 
@@ -31,16 +33,29 @@ export async function POST(req: Request) {
   if (!name) return fail("name requis.");
   if (segmentIds.length === 0)
     return fail("Au moins un segment requis (segment_ids).");
+  const brand = activeBrand(req);
   const db = supabaseAdmin();
+
+  // Un segment d'une autre marque ne peut pas être ciblé : l'email serait
+  // rédigé avec le catalogue d'une marque et envoyé sous l'identité d'une autre.
+  const { data: segs, error: segErr } = await db
+    .from("segments")
+    .select("id")
+    .eq("brand", brand.slug)
+    .in("id", segmentIds);
+  if (segErr) return fail(segErr.message, 500);
+  if ((segs ?? []).length !== segmentIds.length)
+    return fail(`Segment(s) hors de la marque « ${brand.name} ».`, 400);
 
   const { data: campaign, error } = await db
     .from("campaigns")
     .insert({
+      brand: brand.slug,
       segment_id: segmentIds[0], // 1er segment, pour compat
       name,
-      subject: body.subject || DEFAULT_SUBJECT,
-      body_html: body.body_html || DEFAULT_BODY,
-      email_tagline: DEFAULT_TAGLINE,
+      subject: body.subject || brand.defaults.subject,
+      body_html: body.body_html || brand.defaults.body,
+      email_tagline: brand.defaults.tagline,
       status: "draft",
     })
     .select("*")
