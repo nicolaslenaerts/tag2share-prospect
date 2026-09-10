@@ -7,6 +7,7 @@ import { publicBaseFor } from "@/lib/public-url";
 import { activeBrand } from "@/lib/brand-context";
 import { resolveBrandStrict } from "@/lib/brands/store";
 import { brandSender } from "@/lib/brand-sender";
+import { loadVariants } from "@/lib/campaign-variants";
 
 export const runtime = "nodejs";
 
@@ -15,13 +16,17 @@ export const runtime = "nodejs";
  * on fournit l'adresse de test + les données de fusion à simuler (name, city, ...)
  * et le produit à mettre en avant ({{product_*}}). N'envoie JAMAIS à un prospect.
  * L'email part sous l'identité de la marque de la campagne.
+ *
+ * `variantId` choisit la variante d'email à tester (à défaut : la première).
+ * C'est ainsi qu'on relit chaque texte d'un A/B avant de lancer l'envoi.
  */
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const { testEmail, data, product } = await readJson<{
+  const { testEmail, data, product, variantId } = await readJson<{
     testEmail?: string;
     data?: Partial<MergeData>;
     product?: string;
+    variantId?: string;
   }>(req);
 
   const requestBrand = await activeBrand(req);
@@ -54,10 +59,20 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       "Adresse de test requise : renseignez-la dans /reglages pour cette marque."
     );
 
+  // Variante demandée, sinon la première. Une campagne sans variante teste son
+  // propre template.
+  const variants = await loadVariants(db, id);
+  const variant = variantId
+    ? variants.find((v) => v.id === variantId) ?? null
+    : variants[0] ?? null;
+
   const { subject, html } = buildRecipientEmail({
     brand,
     // Le produit choisi pour le test prime ; sinon on garde le produit cible de la campagne.
     campaign: { ...campaign, product: product || campaign.product },
+    // Le produit du test prime aussi sur celui de la variante : c'est le
+    // sélecteur que l'opérateur vient de manipuler.
+    variant: variant && product ? { ...variant, product: null } : variant,
     recipient: {},
     prospect: data || {},
     segment: null,
@@ -69,7 +84,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       brand,
       sender,
       to,
-      subject: `[TEST] ${subject}`,
+      subject: `[TEST${variant ? " " + variant.name : ""}] ${subject}`,
       html,
     });
     return ok({ sent: true, to, resend: sent });

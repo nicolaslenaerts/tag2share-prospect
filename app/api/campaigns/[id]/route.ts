@@ -3,6 +3,7 @@ import { ok, fail, readJson } from "@/lib/http";
 import { suppressionMap, normEmail } from "@/lib/suppression";
 import { activeBrand } from "@/lib/brand-context";
 import { resolveProspectSegments } from "@/lib/campaign-segments";
+import { loadVariants, totalWeight, weightsAreValid } from "@/lib/campaign-variants";
 
 export const runtime = "nodejs";
 
@@ -29,6 +30,14 @@ export async function GET(req: Request, { params }: Ctx) {
   (campaign as any).segments = (links ?? [])
     .map((l) => l.segment)
     .filter(Boolean);
+
+  // Variantes d'email + validité de la répartition : l'interface doit pouvoir
+  // afficher les parts cibles ET bloquer l'envoi tant que la somme n'est pas 100.
+  const variants = await loadVariants(db, id);
+  (campaign as any).variants = variants;
+  (campaign as any).variants_total_weight = totalWeight(variants);
+  (campaign as any).variants_valid =
+    variants.length === 0 || weightsAreValid(variants);
 
   const { data: recipients, error: rErr } = await db
     .from("campaign_recipients")
@@ -99,6 +108,7 @@ export async function GET(req: Request, { params }: Ctx) {
     }
   }
 
+  const variantById = new Map(variants.map((v) => [v.id, v]));
   const recipientsMarked = (recipients ?? []).map((r) => {
     const email = r.to_email || r.prospect?.email;
     const reason = email ? suppressed.get(normEmail(email)) ?? null : null;
@@ -113,6 +123,10 @@ export async function GET(req: Request, { params }: Ctx) {
       emailed_products: info?.products ?? [],
       other_brands: email ? otherBrands.get(normEmail(email)) ?? [] : [],
       resolved_segment: resolvedSegments.get(r.prospect_id) ?? null,
+      // Variante figée sur la ligne. Renvoyée en entier pour que l'aperçu de
+      // l'interface rende exactement le texte qui partira (même cascade que
+      // l'envoi, via buildRecipientEmail).
+      variant: r.variant_id ? variantById.get(r.variant_id) ?? null : null,
     };
   });
 

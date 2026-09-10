@@ -12,6 +12,7 @@ import { getProduct, otherProducts } from "./products";
 import { brandColor, brandTextColor, type BrandConfig } from "./brands/types";
 import { renderLayout } from "./email-layouts";
 import { noEmDash, enhanceLinks, slugify, ctaButton } from "./email-html";
+import { effectiveTemplate, type CampaignVariant } from "./campaign-variants";
 
 export { noEmDash, enhanceLinks, slugify, ctaButton };
 
@@ -203,12 +204,18 @@ export function mergeDataFromProspect(
 }
 
 /**
- * Rend l'email final d'un destinataire. Priorité du template :
+ * Rend l'email final d'un destinataire. Priorité du template, du plus
+ * spécifique au plus général :
  *   1. override du destinataire (custom_subject / custom_html)
- *   2. template de la campagne (l'email est rédigé au niveau de la campagne)
- * Produit mis en avant ({{product_*}}) : le produit cible de la campagne
- * (campaign.product) prime s'il est défini ; sinon on retombe sur le produit
- * du segment fourni (résolu, côté appelant, dans la marque de la campagne).
+ *   2. variante d'email affectée au destinataire (campaign_variants)
+ *   3. template de la campagne (repli quand la campagne n'a pas de variante)
+ * Produit mis en avant ({{product_*}}) : variante, puis produit cible de la
+ * campagne, puis produit du segment fourni (résolu, côté appelant, dans la
+ * marque de la campagne).
+ *
+ * L'accroche et le produit suivent la même cascade, calculée une seule fois
+ * dans effectiveTemplate (lib/campaign-variants.ts) pour que l'aperçu de
+ * l'interface, l'envoi de test et l'envoi réel donnent tous le même résultat.
  */
 export function buildRecipientEmail(args: {
   brand: BrandConfig;
@@ -223,6 +230,8 @@ export function buildRecipientEmail(args: {
     utm_medium?: string | null;
     utm_campaign?: string | null;
   };
+  /** Variante affectée au destinataire (null = template de la campagne). */
+  variant?: CampaignVariant | null;
   recipient: { custom_subject?: string | null; custom_html?: string | null };
   prospect: Record<string, any>;
   segment?: {
@@ -233,16 +242,18 @@ export function buildRecipientEmail(args: {
 }): { subject: string; html: string } {
   const brand = args.brand;
   const seg = args.segment;
-  // Override campagne prioritaire, sinon produit du segment.
-  const productKey = args.campaign.product || seg?.product;
+  // Variante par-dessus le template de la campagne.
+  const tpl = effectiveTemplate(args.campaign, args.variant);
+  // Override variante/campagne prioritaire, sinon produit du segment.
+  const productKey = tpl.product || seg?.product;
   const data = mergeDataFromProspect(
     brand,
     args.prospect,
     args.overrideData,
     productKey
   );
-  const subjectTpl = args.recipient.custom_subject || args.campaign.subject;
-  const bodyTpl = args.recipient.custom_html || args.campaign.body_html;
+  const subjectTpl = args.recipient.custom_subject || tpl.subject;
+  const bodyTpl = args.recipient.custom_html || tpl.body_html;
   const subject = noEmDash(renderMerge(subjectTpl, data));
   // Tag UTM : chaque lien de la marque dans le corps reçoit source/medium/campaign
   // (+ produit en avant). Les valeurs de la campagne priment sur les défauts.
@@ -252,7 +263,12 @@ export function buildRecipientEmail(args: {
     campaign:
       args.campaign.utm_campaign?.trim() ||
       (args.campaign.name ? slugify(args.campaign.name) : "prospection"),
-    content: productKey || undefined,
+    // utm_content porte le produit ET la variante : c'est ce qui permet de
+    // comparer les textes dans les stats de clics, en plus d'email_log.
+    content:
+      [productKey, args.variant ? slugify(args.variant.name) : null]
+        .filter(Boolean)
+        .join("-") || undefined,
   };
   // Le header affiche TOUJOURS le logo de la marque (pas celui du prospect).
   // enhanceLinks garantit des liens visibles même si le template n'en stylise pas.
@@ -269,7 +285,7 @@ export function buildRecipientEmail(args: {
         brand
       ),
       {
-        tagline: args.campaign.email_tagline,
+        tagline: tpl.email_tagline,
         unsubscribeUrl: args.unsubscribeUrl ?? null,
       }
     )

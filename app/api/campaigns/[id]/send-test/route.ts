@@ -8,6 +8,7 @@ import { activeBrand } from "@/lib/brand-context";
 import { resolveBrandStrict } from "@/lib/brands/store";
 import { brandSender } from "@/lib/brand-sender";
 import { resolveProspectSegments } from "@/lib/campaign-segments";
+import { loadVariants } from "@/lib/campaign-variants";
 
 export const runtime = "nodejs";
 
@@ -15,13 +16,18 @@ export const runtime = "nodejs";
  * Envoie un email de TEST à l'adresse de test de la marque (override du
  * destinataire réel). Permet de vérifier le rendu, avec possibilité de
  * surcharger les données fusionnées. N'envoie JAMAIS au prospect réel.
+ *
+ * Variante testée : celle AFFECTÉE au destinataire par défaut, pour tester
+ * exactement ce qu'il recevrait. `variantId` permet d'en tester une autre sans
+ * toucher à la répartition (relire chaque texte d'un A/B avant d'envoyer).
  */
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const { recipientId, overrideData, testEmail } = await readJson<{
+  const { recipientId, overrideData, testEmail, variantId } = await readJson<{
     recipientId: string;
     overrideData?: Partial<MergeData>;
     testEmail?: string;
+    variantId?: string;
   }>(req);
   if (!recipientId) return fail("recipientId requis.");
 
@@ -66,10 +72,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     recipient.prospect_id,
   ]);
 
+  // Variante demandée, sinon celle affectée au destinataire.
+  const variants = await loadVariants(db, id);
+  const wanted = variantId || recipient.variant_id;
+  const variant = wanted ? variants.find((v) => v.id === wanted) ?? null : null;
+
   const realEmail = recipient.to_email || recipient.prospect?.email;
   const { subject, html } = buildRecipientEmail({
     brand,
     campaign,
+    variant,
     recipient,
     prospect: recipient.prospect,
     segment: segments.get(recipient.prospect_id) ?? null,
@@ -82,7 +94,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       brand,
       sender,
       to,
-      subject: `[TEST] ${subject}`,
+      subject: `[TEST${variant ? " " + variant.name : ""}] ${subject}`,
       html,
     });
     await db

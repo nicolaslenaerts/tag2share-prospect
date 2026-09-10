@@ -14,7 +14,7 @@ export async function GET(req: Request) {
     .order("created_at", { ascending: false });
   if (error) return fail(error.message, 500);
 
-  const campaigns = await attachSegments(db, data ?? []);
+  const campaigns = await attachVariants(db, await attachSegments(db, data ?? []));
   return ok({ campaigns });
 }
 
@@ -62,6 +62,25 @@ export async function POST(req: Request) {
     .single();
   if (error) return fail(error.message, 500);
 
+  // Première variante d'email, à 100 %. Une campagne a normalement TOUJOURS au
+  // moins une variante : l'éditeur, la répartition et l'envoi travaillent
+  // dessus, le template de campagne ne restant qu'un miroir de repli.
+  //
+  // Non bloquant : tant que la migration 0016 n'est pas appliquée, la table
+  // n'existe pas et la campagne doit rester créable - l'éditeur retombe alors
+  // sur le template unique (voir isLegacyTemplate côté interface).
+  const { error: varErr } = await db.from("campaign_variants").insert({
+    campaign_id: campaign.id,
+    name: "Variante A",
+    subject: campaign.subject,
+    body_html: campaign.body_html,
+    email_tagline: campaign.email_tagline,
+    weight: 100,
+    sort_order: 0,
+  });
+  if (varErr)
+    console.error("création de la variante initiale:", varErr.message);
+
   const { error: linkErr } = await db
     .from("campaign_segments")
     .upsert(
@@ -70,8 +89,42 @@ export async function POST(req: Request) {
     );
   if (linkErr) return fail(linkErr.message, 500);
 
-  const [withSeg] = await attachSegments(db, [campaign]);
+  const [withSeg] = await attachVariants(db, await attachSegments(db, [campaign]));
   return ok({ campaign: withSeg }, 201);
+}
+
+/**
+ * Attache à chaque campagne ses variantes d'email + la validité de leur
+ * répartition, pour que la liste signale d'un coup d'oeil une campagne dont les
+ * parts ne font pas 100 % (envoi bloqué) sans avoir à l'ouvrir.
+ */
+async function attachVariants(
+  db: ReturnType<typeof supabaseAdmin>,
+  campaigns: any[]
+) {
+  if (campaigns.length === 0) return campaigns;
+  const ids = campaigns.map((c) => c.id);
+  const { data: rows } = await db
+    .from("campaign_variants")
+    .select("id, campaign_id, name, weight, sort_order")
+    .in("campaign_id", ids)
+    .order("sort_order", { ascending: true });
+  const byCampaign = new Map<string, any[]>();
+  for (const v of rows ?? []) {
+    const arr = byCampaign.get(v.campaign_id) ?? [];
+    arr.push(v);
+    byCampaign.set(v.campaign_id, arr);
+  }
+  return campaigns.map((c) => {
+    const variants = byCampaign.get(c.id) ?? [];
+    const total = variants.reduce((n, v) => n + (v.weight || 0), 0);
+    return {
+      ...c,
+      variants,
+      variants_total_weight: total,
+      variants_valid: variants.length === 0 || total === 100,
+    };
+  });
 }
 
 /** Attache à chaque campagne son tableau `segments` (via campaign_segments). */

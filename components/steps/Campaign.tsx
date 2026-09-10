@@ -11,16 +11,31 @@ import {
   requiredProspectFields,
 } from "@/lib/email";
 import { getProduct, normalizeProductKey, productLabel } from "@/lib/products";
+import {
+  totalWeight,
+  evenWeights,
+  TOTAL_WEIGHT,
+  type CampaignVariant,
+} from "@/lib/campaign-variants";
 import { useBrand } from "@/components/BrandProvider";
 import { brandColor, brandOnColor } from "@/lib/brands/types";
 
 type Segment = { id: string; label?: string; product?: string };
+/**
+ * Variante d'email : un texte parmi plusieurs dans la campagne, avec sa part
+ * d'envoi en % (`weight`). La somme des parts doit faire 100 pour envoyer.
+ */
+type Variant = CampaignVariant;
 type Campaign = {
   id: string; name: string; subject: string; body_html: string; status: string;
   email_tagline?: string | null;
   product?: string | null; // produit cible (override) ; null = produit du segment
   utm_source?: string | null; utm_medium?: string | null; utm_campaign?: string | null;
   segment_id?: string; segments?: Segment[];
+  /** Variantes d'email et validité de leur répartition (renvoyées par l'API). */
+  variants?: Variant[];
+  variants_total_weight?: number;
+  variants_valid?: boolean;
 };
 type Prospect = {
   id: string; name: string; email?: string; contact_name?: string; city?: string;
@@ -45,6 +60,12 @@ type Recipient = {
    * marque sur les données antérieures au cloisonnement du vivier (0015).
    */
   resolved_segment?: Segment | null;
+  /**
+   * Variante d'email FIGÉE pour ce destinataire (répartie côté serveur). C'est
+   * elle qui partira : l'aperçu et le test doivent la rendre, pas la variante
+   * affichée dans l'éditeur.
+   */
+  variant?: Variant | null;
 };
 
 const SUPPRESSION_LABEL: Record<string, string> = {
@@ -55,6 +76,37 @@ const SUPPRESSION_LABEL: Record<string, string> = {
 };
 function suppressionLabel(reason?: string | null) {
   return SUPPRESSION_LABEL[reason || ""] || "⛔ exclu";
+}
+
+/**
+ * Variantes affichées dans l'éditeur.
+ *
+ * Une campagne a normalement au moins une variante (créée à l'ouverture de la
+ * campagne, ou par le backfill de la migration 0016). Si la migration n'est pas
+ * encore appliquée, on présente le template de la campagne comme une variante
+ * unique à 100 % avec un id VIDE : l'éditeur bascule alors en mode « template
+ * unique » (voir isLegacyTemplate) au lieu d'afficher une répartition qu'aucune
+ * table ne pourrait enregistrer.
+ */
+function draftVariants(campaign: Campaign): Variant[] {
+  if (campaign.variants && campaign.variants.length > 0) return campaign.variants;
+  return [
+    {
+      id: "",
+      name: "Variante A",
+      subject: campaign.subject,
+      body_html: campaign.body_html,
+      email_tagline: campaign.email_tagline ?? null,
+      product: null,
+      weight: TOTAL_WEIGHT,
+      sort_order: 0,
+    },
+  ];
+}
+
+/** Vrai tant que la campagne n'a pas de variantes en base (migration 0016 non appliquée). */
+function isLegacyTemplate(variants: Variant[]): boolean {
+  return variants.length === 1 && !variants[0].id;
 }
 
 export function Campaign() {
@@ -181,6 +233,24 @@ export function Campaign() {
                     <Badge key={s.id} color="blue">{s.label}</Badge>
                   ))}{" "}
                   <Badge>{c.status}</Badge>
+                  {(c.variants?.length ?? 0) > 1 && (
+                    <span
+                      title={
+                        "Répartition : " +
+                        c.variants!.map((v) => `${v.name} ${v.weight} %`).join(" / ")
+                      }
+                    >
+                      <Badge color={c.variants_valid ? "green" : "red"}>
+                        {c.variants!.length} variantes ·{" "}
+                        {c.variants!.map((v) => v.weight + " %").join(" / ")}
+                      </Badge>
+                    </span>
+                  )}
+                  {c.variants_valid === false && (
+                    <span title="La somme des parts ne fait pas 100 % : l'envoi est bloqué.">
+                      <Badge color="red">⚠ répartition {c.variants_total_weight} %</Badge>
+                    </span>
+                  )}
                 </div>
                 <Button variant="outline" onClick={() => openCampaign(c)}>
                   Ouvrir
@@ -218,12 +288,42 @@ function CampaignEditor({
   onBack: () => void; reload: () => void; msg: string; setMsg: (s: string) => void;
 }) {
   const brand = useBrand();
-  const [subject, setSubject] = useState(campaign.subject);
-  const [body, setBody] = useState(campaign.body_html);
-  const [tagline, setTagline] = useState(
-    campaign.email_tagline ?? brand.defaults.tagline
+  // Brouillon LOCAL des variantes : on modifie les textes ET les parts, puis on
+  // enregistre en un seul geste - comme avant avec le template unique. Le
+  // tableau renvoyé par le serveur après chaque mutation redevient la référence.
+  const [variants, setVariants] = useState<Variant[]>(() => draftVariants(campaign));
+  const [activeId, setActiveId] = useState<string>(
+    () => draftVariants(campaign)[0]?.id ?? ""
   );
+  const active = variants.find((v) => v.id === activeId) ?? variants[0];
+  const legacy = isLegacyTemplate(variants);
+
+  /** Applique une modification à la variante en cours d'édition. */
+  function patchActive(fields: Partial<Variant>) {
+    if (!active) return;
+    setVariants((vs) =>
+      vs.map((v) => (v.id === active.id ? { ...v, ...fields } : v))
+    );
+  }
+  // Le reste de l'éditeur (aperçu, insertion de variables, IA) travaille sur ces
+  // alias : la variante active se comporte exactement comme l'ancien template
+  // unique, y compris pour setBody(prev => ...) utilisé par insertToken.
+  const subject = active?.subject ?? "";
+  const body = active?.body_html ?? "";
+  const tagline = active?.email_tagline ?? brand.defaults.tagline;
+  const setSubject = (v: string) => patchActive({ subject: v });
+  const setTagline = (v: string) => patchActive({ email_tagline: v });
+  const setBody = (v: string | ((prev: string) => string)) =>
+    patchActive({
+      body_html: typeof v === "function" ? v(active?.body_html ?? "") : v,
+    });
+  // Produit cible : celui de la campagne (toutes variantes), qu'une variante
+  // peut surcharger pour elle seule.
   const [product, setProduct] = useState(campaign.product ?? "");
+  const variantProduct = active?.product ?? "";
+
+  const weightTotal = totalWeight(variants);
+  const weightsOk = weightTotal === TOTAL_WEIGHT;
   const [utmSource, setUtmSource] = useState(campaign.utm_source ?? "");
   const [utmMedium, setUtmMedium] = useState(campaign.utm_medium ?? "");
   const [utmCampaign, setUtmCampaign] = useState(campaign.utm_campaign ?? "");
@@ -275,31 +375,138 @@ function CampaignEditor({
   const sample =
     recipients[0]?.prospect ||
     prospects[0] || { name: "Le Petit Café", city: "Bruxelles", contact_name: "Marie Dupont" };
-  // Aperçu : produit cible de la campagne s'il est défini, sinon produit du segment de l'exemple.
+  // Aperçu : même cascade qu'à l'envoi (variante, puis campagne, puis segment
+  // de l'exemple).
   const data = mergeDataFromProspect(
     brand,
     sample as any,
     undefined,
-    product || (sample as any).segment?.product
+    variantProduct || product || (sample as any).segment?.product
   );
+
+  type VariantsResponse = {
+    variants: Variant[];
+    total_weight: number;
+    valid: boolean;
+  };
 
   async function saveTemplate() {
     setSaving(true);
-    await api(`/api/campaigns/${campaign.id}`, {
-      method: "PATCH",
-      json: {
-        subject,
-        body_html: body,
-        email_tagline: tagline,
-        product: product || null, // "" → null = produit du segment
-        utm_source: utmSource.trim() || null, // "" → null = défaut "email"
-        utm_medium: utmMedium.trim() || null, // "" → null = défaut "prospection"
-        utm_campaign: utmCampaign.trim() || null, // "" → null = slug du nom
-      },
-    });
-    setSaving(false);
-    setMsg("Template enregistré.");
-    reload();
+    try {
+      // Réglages communs à toutes les variantes (produit cible, UTM).
+      await api(`/api/campaigns/${campaign.id}`, {
+        method: "PATCH",
+        json: {
+          product: product || null, // "" → null = produit du segment
+          utm_source: utmSource.trim() || null, // "" → null = défaut "email"
+          utm_medium: utmMedium.trim() || null, // "" → null = défaut "prospection"
+          utm_campaign: utmCampaign.trim() || null, // "" → null = slug du nom
+          // Migration 0016 non appliquée : le template vit encore sur la campagne.
+          ...(legacy
+            ? { subject, body_html: body, email_tagline: tagline }
+            : {}),
+        },
+      });
+      if (legacy) {
+        setMsg("Template enregistré.");
+      } else {
+        // Textes + parts. Le serveur redistribue les destinataires en jeu.
+        const r = await api<VariantsResponse>(
+          `/api/campaigns/${campaign.id}/variants`,
+          { method: "PATCH", json: { variants } }
+        );
+        setVariants(r.variants);
+        setMsg(
+          r.valid
+            ? `${r.variants.length} variante(s) enregistrée(s), destinataires répartis.`
+            : `Enregistré, mais la répartition fait ${r.total_weight} % au lieu de 100 % : ` +
+              `l'envoi restera bloqué jusqu'à correction.`
+        );
+      }
+      reload();
+    } catch (e) {
+      setMsg("Erreur : " + (e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  /**
+   * Ajoute une variante. On enregistre d'abord le brouillon en cours : sans ça,
+   * la nouvelle variante serait copiée depuis le texte en base et les
+   * modifications non enregistrées des autres variantes seraient écrasées par
+   * la réponse du serveur.
+   */
+  async function addVariant() {
+    if (variants.length >= 10) return;
+    setSaving(true);
+    try {
+      await api<VariantsResponse>(`/api/campaigns/${campaign.id}/variants`, {
+        method: "PATCH",
+        json: { variants },
+      });
+      const r = await api<VariantsResponse & { variant: Variant }>(
+        `/api/campaigns/${campaign.id}/variants`,
+        { method: "POST", json: { copy_from: active?.id } }
+      );
+      setVariants(r.variants);
+      setActiveId(r.variant.id);
+      setMsg(
+        `${r.variant.name} ajoutée (copie du texte courant), parts réparties à ` +
+          `${r.variants.map((v) => v.weight + " %").join(" / ")}. Ajustez si besoin.`
+      );
+      reload();
+    } catch (e) {
+      setMsg("Erreur : " + (e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function removeVariant(v: Variant) {
+    if (variants.length <= 1) return;
+    const sent = recipients.filter(
+      (r) => r.variant?.id === v.id && r.status === "sent"
+    ).length;
+    if (
+      !confirm(
+        `Supprimer « ${v.name} » ?\n\n` +
+          `Ses destinataires non envoyés seront redistribués entre les variantes ` +
+          `restantes, dont les parts sont remises à l'échelle de 100 %.` +
+          (sent
+            ? `\n\n${sent} email(s) déjà partis avec ce texte : ils restent dans le ` +
+              `journal des emails, sous le nom de la variante.`
+            : "")
+      )
+    )
+      return;
+    try {
+      const r = await api<VariantsResponse & { deleted: string }>(
+        `/api/campaigns/${campaign.id}/variants`,
+        { method: "DELETE", json: { variantId: v.id } }
+      );
+      setVariants(r.variants);
+      if (activeId === v.id) setActiveId(r.variants[0]?.id ?? "");
+      setMsg(
+        `Variante supprimée. Nouvelles parts : ` +
+          r.variants.map((x) => `${x.name} ${x.weight} %`).join(" / ") + "."
+      );
+      reload();
+    } catch (e) {
+      setMsg("Erreur : " + (e as Error).message);
+    }
+  }
+
+  /** Part d'une variante (local ; appliquée à l'enregistrement). */
+  function setWeight(id: string, raw: string) {
+    const n = Math.max(0, Math.min(TOTAL_WEIGHT, Math.round(Number(raw) || 0)));
+    setVariants((vs) => vs.map((v) => (v.id === id ? { ...v, weight: n } : v)));
+  }
+
+  /** Parts égales (100 / n, reste aux premières) : 34 / 33 / 33 pour trois. */
+  function distributeEvenly() {
+    const w = evenWeights(variants.length);
+    setVariants((vs) => vs.map((v, i) => ({ ...v, weight: w[i] })));
   }
 
   async function deleteCampaign() {
@@ -329,7 +536,12 @@ function CampaignEditor({
   // et disposant de TOUTES les infos utilisées par l'email (variables {{...}}
   // du template, hors variables produit qui viennent du segment).
   const segIds = (campaign.segments ?? []).map((s) => s.id);
-  const reqFields = requiredProspectFields(subject, body);
+  // Champs requis = UNION de toutes les variantes : un prospect peut recevoir
+  // n'importe laquelle d'entre elles, et un {{city}} vide donnerait un email
+  // troué. Même règle que la synchro serveur (app/api/campaigns/[id]/sync).
+  const reqFields = requiredProspectFields(
+    ...variants.flatMap((v) => [v.subject, v.body_html])
+  );
   const inTargetSegments = (p: Prospect) =>
     segIds.length === 0 || (p.segments ?? []).some((s) => segIds.includes(s.id));
   const hasAllFields = (p: Prospect) =>
@@ -391,6 +603,23 @@ function CampaignEditor({
     (r) => r.status === "approved" && !isAlreadyContacted(r)
   );
 
+  // Répartition RÉELLE, telle qu'elle est figée sur les lignes destinataires.
+  // À comparer aux parts cibles : les deux ne coïncident qu'après
+  // enregistrement (les parts éditées ici ne sont pas encore appliquées).
+  const variantStats = new Map<string, { assigned: number; sent: number }>();
+  let unassignedCount = 0;
+  for (const r of recipients) {
+    if (r.status === "excluded") continue;
+    if (!r.variant?.id) {
+      unassignedCount += 1;
+      continue;
+    }
+    const cur = variantStats.get(r.variant.id) ?? { assigned: 0, sent: 0 };
+    cur.assigned += 1;
+    if (r.status === "sent") cur.sent += 1;
+    variantStats.set(r.variant.id, cur);
+  }
+
   // Lot courant = les N PREMIERS approuvés dans l'ordre de la liste (ordre
   // d'ajout à la campagne, celui affiché plus haut). Un lot vide ou invalide
   // vaut « tous », et on ne dépasse jamais le nombre d'approuvés restants.
@@ -404,6 +633,16 @@ function CampaignEditor({
 
   async function sendAll() {
     if (toSend.length === 0) return;
+    // Une répartition qui ne fait pas 100 % enverrait des proportions autres
+    // que celles affichées. Le serveur refuse aussi, mais autant ne pas faire
+    // taper « ENVOYER » pour rien.
+    if (!legacy && !weightsOk) {
+      setMsg(
+        `Répartition des variantes à ${weightTotal} % au lieu de 100 % : ` +
+          `corrigez les parts et enregistrez avant d'envoyer.`
+      );
+      return;
+    }
     const rest = remainingAfter;
     const typed = prompt(
       `⚠️ Envoi RÉEL à ${toSend.length} prospect(s)` +
@@ -497,12 +736,177 @@ function CampaignEditor({
         </p>
       </Card>
 
+      <Card className="p-5">
+        <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+          <h3 className="font-bold">Variantes d'email et répartition</h3>
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge color={weightsOk ? "green" : "red"}>
+              Total {weightTotal} %{weightsOk ? " ✓" : ""}
+            </Badge>
+            {variants.length > 1 && (
+              <Button
+                variant="ghost"
+                onClick={distributeEvenly}
+                title="Parts égales entre toutes les variantes"
+              >
+                Répartir également
+              </Button>
+            )}
+            {!legacy && (
+              <Button
+                variant="outline"
+                onClick={addVariant}
+                disabled={saving || variants.length >= 10}
+                title="Duplique le texte affiché dans une nouvelle variante"
+              >
+                + Ajouter une variante
+              </Button>
+            )}
+          </div>
+        </div>
+        {legacy ? (
+          <p className="text-xs text-amber-600">
+            Cette campagne n'a pas encore de variantes en base : appliquez la migration{" "}
+            <code>0016_campaign_variants.sql</code> dans l'éditeur SQL Supabase pour
+            pouvoir envoyer plusieurs textes avec une proportion chacun. En attendant,
+            l'éditeur ci-dessous modifie le template unique de la campagne.
+          </p>
+        ) : (
+          <>
+            <p className="mb-3 text-xs text-gray-400">
+              Plusieurs textes pour la même campagne, chacun avec sa part d'envoi
+              (ex. <b>35 % / 35 % / 30 %</b>). Le total doit faire 100 %, sinon l'envoi
+              est bloqué. Les destinataires sont répartis à l'enregistrement, en quotas
+              exacts et entrelacés : chaque lot d'envoi respecte déjà les proportions.
+              Cliquez une ligne pour éditer son texte.
+            </p>
+            <table className="w-full text-sm">
+              <thead className="text-left text-xs uppercase text-gray-500">
+                <tr>
+                  <th className="py-2">Variante</th>
+                  <th className="py-2 w-28">Part visée</th>
+                  <th className="py-2">Affectés</th>
+                  <th className="py-2">Envoyés</th>
+                  <th className="py-2"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {variants.map((v) => {
+                  const st = variantStats.get(v.id) ?? { assigned: 0, sent: 0 };
+                  const isActive = active?.id === v.id;
+                  return (
+                    <tr
+                      key={v.id}
+                      className={cn(
+                        "border-t border-gray-100",
+                        isActive && "bg-brand-50"
+                      )}
+                    >
+                      <td className="py-2">
+                        <button
+                          onClick={() => setActiveId(v.id)}
+                          className="text-left font-medium hover:underline"
+                          title="Éditer le texte de cette variante"
+                        >
+                          {isActive ? "▸ " : ""}
+                          {v.name}
+                        </button>
+                      </td>
+                      <td className="py-2">
+                        <div className="flex items-center gap-1">
+                          <Input
+                            type="number"
+                            min={0}
+                            max={TOTAL_WEIGHT}
+                            value={String(v.weight)}
+                            onChange={(e) => setWeight(v.id, e.target.value)}
+                            className="w-20"
+                            aria-label={`Part d'envoi de ${v.name}`}
+                          />
+                          <span className="text-gray-400">%</span>
+                        </div>
+                      </td>
+                      <td className="py-2 text-gray-500">
+                        {st.assigned}
+                        <span className="ml-1 text-xs text-gray-400">
+                          ({Math.round(
+                            (st.assigned /
+                              Math.max(1, recipients.filter((r) => r.status !== "excluded").length)) *
+                              100
+                          )}{" "}
+                          %)
+                        </span>
+                      </td>
+                      <td className="py-2 text-gray-500">{st.sent || "-"}</td>
+                      <td className="py-2 text-right">
+                        {variants.length > 1 && (
+                          <Button
+                            variant="ghost"
+                            onClick={() => removeVariant(v)}
+                            className="text-red-600"
+                            title="Supprimer cette variante"
+                          >
+                            Supprimer
+                          </Button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            {!weightsOk && (
+              <p className="mt-2 text-xs font-medium text-red-600">
+                Le total fait {weightTotal} % : ajustez les parts pour atteindre 100 %
+                {variants.length > 1 ? " (ou cliquez « Répartir également »)" : ""}.
+                L'envoi reste bloqué d'ici là.
+              </p>
+            )}
+            {unassignedCount > 0 && (
+              <p className="mt-2 text-xs text-amber-600">
+                {unassignedCount} destinataire(s) sans variante : ils seront répartis au
+                prochain enregistrement (ou juste avant l'envoi).
+              </p>
+            )}
+            <p className="mt-2 text-[11px] text-gray-400">
+              La colonne « Affectés » montre la répartition <b>déjà enregistrée</b> ; elle
+              ne suit les parts ci-dessus qu'après avoir cliqué « Enregistrer ». Les
+              destinataires déjà envoyés gardent leur variante, l'historique d'un A/B
+              n'est jamais réécrit.
+            </p>
+          </>
+        )}
+      </Card>
+
       <div className="grid gap-4 lg:grid-cols-2">
         <Card className="p-5">
-          <h3 className="mb-1 font-bold">Email de la campagne</h3>
+          <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+            <h3 className="font-bold">
+              {legacy ? "Email de la campagne" : `Texte de « ${active?.name ?? ""} »`}
+            </h3>
+            {!legacy && <Badge color="blue">{active?.weight ?? 0} % des envois</Badge>}
+          </div>
+          {!legacy && (
+            <>
+              <label className="mb-1 block text-xs font-medium text-gray-600">
+                Nom de la variante
+              </label>
+              <Input
+                value={active?.name ?? ""}
+                onChange={(e) => patchActive({ name: e.target.value })}
+                placeholder="ex : Accroche avis Google"
+              />
+              <p className="mb-3 mt-1 text-[11px] text-gray-400">
+                Sert à vous repérer ici et dans le journal des emails, pour comparer les
+                performances de chaque texte.
+              </p>
+            </>
+          )}
           <p className="mb-3 text-xs text-gray-400">
-            L'email envoyé à tous les destinataires (sauf adaptation individuelle). Les
-            variables {"{{product_*}}"} suivent le produit cible ci-dessous.
+            {legacy
+              ? "L'email envoyé à tous les destinataires (sauf adaptation individuelle)."
+              : "Le texte envoyé aux destinataires affectés à cette variante (sauf adaptation individuelle)."}{" "}
+            Les variables {"{{product_*}}"} suivent le produit cible ci-dessous.
           </p>
           <label className="mb-1 block text-xs font-medium text-gray-600">
             Produit cible
@@ -523,8 +927,32 @@ function CampaignEditor({
           <p className="mb-3 text-[11px] text-gray-400">
             Choisissez un produit pour l'imposer à <b>toute la campagne</b>, ou laissez sur
             « Auto » pour que chaque prospect voie le produit de son segment. Pensez à
-            enregistrer le template.
+            enregistrer.
           </p>
+          {!legacy && (
+            <>
+              <label className="mb-1 block text-xs font-medium text-gray-600">
+                Produit de cette variante (surcharge)
+              </label>
+              <select
+                value={variantProduct}
+                onChange={(e) => patchActive({ product: e.target.value || null })}
+                className="mb-1 w-full rounded-lg border border-gray-300 px-2 py-2 text-sm"
+              >
+                <option value="">Comme la campagne ci-dessus</option>
+                {brand.products.map((p) => (
+                  <option key={p.key} value={p.key}>
+                    {productLabel(p)}
+                    {p.price ? ` (${p.price})` : ""}
+                  </option>
+                ))}
+              </select>
+              <p className="mb-3 text-[11px] text-gray-400">
+                Permet de tester <b>deux produits</b> sur la même liste : cette variante
+                met en avant celui-ci, les autres gardent le produit de la campagne.
+              </p>
+            </>
+          )}
           <label className="mb-1 block text-xs font-medium text-gray-600">Sujet</label>
           <Input value={subject} onChange={(e) => setSubject(e.target.value)} />
           <label className="mb-1 mt-3 block text-xs font-medium text-gray-600">
@@ -628,15 +1056,29 @@ function CampaignEditor({
             </p>
           </div>
 
-          <div className="mt-3">
+          <div className="mt-3 flex flex-wrap items-center gap-2">
             <Button onClick={saveTemplate} disabled={saving}>
-              {saving ? <Spinner /> : "Enregistrer le template"}
+              {saving ? (
+                <Spinner />
+              ) : legacy ? (
+                "Enregistrer le template"
+              ) : (
+                `Enregistrer les ${variants.length} variante(s) et répartir`
+              )}
             </Button>
+            {!legacy && (
+              <span className="text-[11px] text-gray-400">
+                Enregistre les textes de <b>toutes</b> les variantes et leurs parts, puis
+                réaffecte les destinataires.
+              </span>
+            )}
           </div>
         </Card>
 
         <Card className="p-5">
-          <h3 className="mb-2 font-bold">Aperçu (exemple : {sample.name})</h3>
+          <h3 className="mb-2 font-bold">
+            Aperçu {legacy ? "" : `de « ${active?.name ?? ""} » `}(exemple : {sample.name})
+          </h3>
           <div className="mb-2 rounded bg-gray-50 px-3 py-2 text-sm">
             <span className="text-gray-400">Sujet : </span>
             {renderMerge(subject, data)}
@@ -678,6 +1120,7 @@ function CampaignEditor({
         campaignId={campaign.id}
         reqFields={reqFields}
         products={testProducts.map((p) => ({ key: p.key, name: productLabel(p) }))}
+        variants={legacy ? [] : variants}
         setMsg={setMsg}
       />
 
@@ -689,8 +1132,30 @@ function CampaignEditor({
               Seuls les destinataires <b>approuvés</b> ({approved.length}) seront envoyés.
               Confirmation explicite requise.
             </p>
+            {!legacy && toSend.length > 0 && variants.length > 1 && (
+              <p className="mt-1 text-xs text-gray-500">
+                Composition de ce lot :{" "}
+                {variants
+                  .map((v) => {
+                    const n = toSend.filter((r) => r.variant?.id === v.id).length;
+                    return `${v.name} ${n} (${Math.round((n / toSend.length) * 100)} %)`;
+                  })
+                  .join(" · ")}
+                {toSend.some((r) => !r.variant?.id) &&
+                  ` · sans variante ${toSend.filter((r) => !r.variant?.id).length}`}
+              </p>
+            )}
           </div>
-          <Button variant="danger" onClick={sendAll} disabled={toSend.length === 0}>
+          <Button
+            variant="danger"
+            onClick={sendAll}
+            disabled={toSend.length === 0 || (!legacy && !weightsOk)}
+            title={
+              !legacy && !weightsOk
+                ? `Répartition à ${weightTotal} % : corrigez les parts avant d'envoyer.`
+                : undefined
+            }
+          >
             {remainingAfter > 0
               ? `Envoyer les ${toSend.length} prochains`
               : `Envoyer aux ${approved.length} approuvés`}
@@ -878,15 +1343,18 @@ const FIELD_LABELS: Record<string, string> = Object.fromEntries(
 
 /** Envoi d'un email de test au niveau campagne, avec données de fusion saisies. */
 function TestSend({
-  campaignId, reqFields, products, setMsg,
+  campaignId, reqFields, products, variants, setMsg,
 }: {
   campaignId: string;
   reqFields: string[];
   products: { key: string; name: string }[];
+  /** Variantes de la campagne : on teste un texte à la fois. */
+  variants: Variant[];
   setMsg: (s: string) => void;
 }) {
   const [testEmail, setTestEmail] = useState("");
   const [product, setProduct] = useState(products[0]?.key || "keyring");
+  const [variantId, setVariantId] = useState(variants[0]?.id ?? "");
   const [sending, setSending] = useState(false);
   const [data, setData] = useState<Record<string, string>>(() => {
     const init: Record<string, string> = {};
@@ -902,9 +1370,18 @@ function TestSend({
     try {
       const res = await api<{ to: string }>(`/api/campaigns/${campaignId}/test`, {
         method: "POST",
-        json: { testEmail: testEmail || undefined, data, product },
+        json: {
+          testEmail: testEmail || undefined,
+          data,
+          product,
+          variantId: variantId || undefined,
+        },
       });
-      setMsg(`Email de test envoyé à ${res.to}.`);
+      const which = variants.find((v) => v.id === variantId);
+      setMsg(
+        `Email de test envoyé à ${res.to}` +
+          (which ? ` (texte « ${which.name} »).` : ".")
+      );
     } catch (e) {
       setMsg("Erreur test : " + (e as Error).message);
     } finally {
@@ -918,6 +1395,8 @@ function TestSend({
       <p className="mb-3 text-xs text-gray-400">
         Vérifiez le rendu avant l'envoi de masse : saisissez une adresse et les données de
         fusion à simuler. L'email part uniquement vers cette adresse, jamais vers un prospect.
+        {variants.length > 1 &&
+          " Testez chaque variante : c'est le seul moyen de relire tous les textes qui vont partir."}
       </p>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <label className="text-xs font-medium text-gray-600">
@@ -930,6 +1409,22 @@ function TestSend({
             className="mt-1"
           />
         </label>
+        {variants.length > 1 && (
+          <label className="text-xs font-medium text-gray-600">
+            Variante à tester
+            <select
+              value={variantId}
+              onChange={(e) => setVariantId(e.target.value)}
+              className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+            >
+              {variants.map((v) => (
+                <option key={v.id} value={v.id}>
+                  {v.name} ({v.weight} %)
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         {products.length > 1 && (
           <label className="text-xs font-medium text-gray-600">
             Produit à simuler
@@ -1199,7 +1694,10 @@ function RecipientRow({
   const [ch, setCh] = useState(r.custom_html || "");
   // Produit affiché = produit cible de la campagne s'il est défini, sinon celui
   // du segment résolu côté serveur (même règle qu'à l'envoi réel).
-  const product = getProduct(brand, campaign.product || r.resolved_segment?.product);
+  const product = getProduct(
+    brand,
+    r.variant?.product || campaign.product || r.resolved_segment?.product
+  );
   // Email déjà traité (envoyé, échoué) ou adresse déjà contactée ailleurs : plus
   // d'édition/test/approbation, seulement un aperçu.
   const contacted = isAlreadyContacted(r);
@@ -1210,6 +1708,9 @@ function RecipientRow({
   const preview = buildRecipientEmail({
     brand,
     campaign,
+    // La variante FIGÉE sur ce destinataire, pas celle éditée au-dessus :
+    // l'aperçu doit montrer le texte qui partira à CE contact.
+    variant: r.variant ?? null,
     recipient: { custom_subject: r.custom_subject, custom_html: r.custom_html },
     prospect: r.prospect,
     segment: r.resolved_segment ?? null,
@@ -1221,8 +1722,13 @@ function RecipientRow({
       <tr className="border-t border-gray-100">
         <td className="p-3 font-medium">
           {r.prospect.name}
-          <div className="mt-0.5">
+          <div className="mt-0.5 flex flex-wrap gap-1">
             <Badge color="blue">{productLabel(product)}</Badge>
+            {r.variant && (
+              <span title={`Texte envoyé : ${r.variant.name} (${r.variant.weight} % des envois)`}>
+                <Badge>✉ {r.variant.name}</Badge>
+              </span>
+            )}
           </div>
         </td>
         <td className="p-3 text-gray-500">{r.to_email || r.prospect.email || "-"}</td>
@@ -1338,13 +1844,16 @@ function RecipientRow({
               </div>
               <div>
                 <label className="text-xs font-medium text-gray-600">
-                  Sujet personnalisé (vide = template campagne)
+                  Sujet personnalisé (vide ={" "}
+                  {r.variant ? `sujet de « ${r.variant.name} »` : "template campagne"})
                 </label>
                 <Input value={cs} onChange={(e) => setCs(e.target.value)} />
               </div>
               <div>
                 <label className="text-xs font-medium text-gray-600">
-                  Corps personnalisé (vide = email du segment {product.name})
+                  Corps personnalisé (vide ={" "}
+                  {r.variant ? `texte de « ${r.variant.name} »` : "template de la campagne"}
+                  , produit {product.name})
                 </label>
                 <Textarea
                   value={ch}

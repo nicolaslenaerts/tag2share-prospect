@@ -3,6 +3,7 @@ import { ok, fail } from "@/lib/http";
 import { suppressionMap, normEmail } from "@/lib/suppression";
 import { requiredProspectFields } from "@/lib/email";
 import { activeBrand } from "@/lib/brand-context";
+import { loadVariants, assignVariants } from "@/lib/campaign-variants";
 
 export const runtime = "nodejs";
 
@@ -12,6 +13,15 @@ type Ctx = { params: Promise<{ id: string }> };
 // ciblés qui sont éligibles — email présent, non supprimé, tous les champs requis du
 // template — et pas déjà destinataires (quel que soit leur statut, y compris exclus).
 // Idempotent : peut être appelé à chaque ouverture de campagne.
+//
+// Champs requis : l'UNION de ceux de TOUTES les variantes d'email. Un
+// destinataire peut recevoir n'importe laquelle d'entre elles ; s'il ne
+// remplissait que les variables de l'une, l'autre partirait avec un trou
+// ({{city}} vide, « Bonjour , »). Mieux vaut l'écarter que l'envoyer troué.
+//
+// Termine TOUJOURS par la répartition des variantes (voir `done`) : les
+// prospects qui viennent d'entrer reçoivent leur variante tout de suite, et la
+// liste affiche des proportions justes sans action supplémentaire.
 export async function POST(req: Request, { params }: Ctx) {
   const { id: campaignId } = await params;
   const brand = await activeBrand(req);
@@ -25,6 +35,22 @@ export async function POST(req: Request, { params }: Ctx) {
     .single();
   if (cErr || !campaign) return fail("Campagne introuvable.", 404);
 
+  const variants = await loadVariants(db, campaignId);
+
+  // Sortie unique : on répartit les variantes à CHAQUE synchro, même quand
+  // rien n'a été ajouté. Les quotas dépendent du nombre de destinataires en
+  // jeu, qui bouge aussi par exclusion manuelle ou par envoi d'un lot.
+  // Best-effort : un échec de répartition ne doit pas faire échouer la synchro,
+  // l'envoi affecte de toute façon les destinataires restés sans variante.
+  const done = async (added: number) => {
+    try {
+      await assignVariants(db, campaignId, variants);
+    } catch (e) {
+      console.error("répartition des variantes:", (e as Error).message);
+    }
+    return ok({ added });
+  };
+
   // Segments ciblés, restreints à la marque de la campagne.
   const { data: segLinks } = await db
     .from("campaign_segments")
@@ -34,7 +60,7 @@ export async function POST(req: Request, { params }: Ctx) {
     .map((l: any) => l.segment)
     .filter((sg: any) => sg && sg.brand === brand.slug)
     .map((sg: any) => sg.id as string);
-  if (segmentIds.length === 0) return ok({ added: 0 });
+  if (segmentIds.length === 0) return done(0);
 
   // Prospects rattachés à au moins un de ces segments.
   const { data: memberships } = await db
@@ -42,7 +68,7 @@ export async function POST(req: Request, { params }: Ctx) {
     .select("prospect_id")
     .in("segment_id", segmentIds);
   const prospectIds = [...new Set((memberships ?? []).map((m) => m.prospect_id))];
-  if (prospectIds.length === 0) return ok({ added: 0 });
+  if (prospectIds.length === 0) return done(0);
 
   // Déjà destinataires (tous statuts, y compris « excluded ») → jamais ré-ajoutés.
   const { data: existing } = await db
@@ -52,7 +78,7 @@ export async function POST(req: Request, { params }: Ctx) {
   const already = new Set((existing ?? []).map((r) => r.prospect_id));
 
   const candidateIds = prospectIds.filter((pid) => !already.has(pid));
-  if (candidateIds.length === 0) return ok({ added: 0 });
+  if (candidateIds.length === 0) return done(0);
 
   const { data: prospects, error: pErr } = await db
     .from("prospects")
@@ -67,7 +93,10 @@ export async function POST(req: Request, { params }: Ctx) {
   );
 
   // Mêmes critères d'éligibilité que la liste « Ajouter des destinataires » côté UI.
-  const reqFields = requiredProspectFields(campaign.subject, campaign.body_html);
+  const templates = variants.flatMap((v) => [v.subject, v.body_html]);
+  const reqFields = requiredProspectFields(
+    ...(templates.length > 0 ? templates : [campaign.subject, campaign.body_html])
+  );
   const eligible = (prospects ?? []).filter((p) => {
     if (!p.email || !String(p.email).trim()) return false;
     if (suppressed.get(normEmail(p.email))) return false;
@@ -76,7 +105,7 @@ export async function POST(req: Request, { params }: Ctx) {
       return v != null && String(v).trim() !== "";
     });
   });
-  if (eligible.length === 0) return ok({ added: 0 });
+  if (eligible.length === 0) return done(0);
 
   const rows = eligible.map((p) => ({
     campaign_id: campaignId,
@@ -89,5 +118,9 @@ export async function POST(req: Request, { params }: Ctx) {
     .upsert(rows, { onConflict: "campaign_id,prospect_id", ignoreDuplicates: true })
     .select();
   if (insErr) return fail(insErr.message, 500);
-  return ok({ added: data?.length ?? 0 });
+
+  // Répartition sur l'ENSEMBLE des destinataires en jeu (pas seulement les
+  // nouveaux) : ajouter 20 prospects à une liste de 100 doit ramener chaque
+  // variante à sa part, pas empiler les nouveaux sur une seule.
+  return done(data?.length ?? 0);
 }

@@ -5,7 +5,7 @@ App Next.js **autonome** (indépendante de l'app tag2share / profile-card-creato
 1. **Proposer des types de business** (via Gemini) qui auraient besoin des objets connectés Tag2Share (porte-clé, carte de visite, présentoir).
 2. **Rechercher** ces business via **Google Maps / Places** (pays sélectionnable : Belgique / France).
 3. **Enrichir** chaque prospect : email, personne de contact, logo, réseaux sociaux, depuis leur site web.
-4. **Campagne email** : template éditable avec variables `{{name}}`, `{{contact_name}}`, etc., adaptation par prospect, **email de test** vers votre adresse, puis **envoi réel uniquement après confirmation explicite** via Resend.
+4. **Campagne email** : un ou **plusieurs templates (variantes) avec une proportion d'envoi chacun** (ex. 35 % / 35 % / 30 %), variables `{{name}}`, `{{contact_name}}`, etc., adaptation par prospect, **email de test** vers votre adresse, puis **envoi réel uniquement après confirmation explicite** via Resend.
 
 > 🔒 **Sécurité** : aucun email n'est envoyé sans action explicite. L'envoi réel exige `confirm: true` côté serveur + une confirmation tapée (`ENVOYER`) côté interface. Les tests sont toujours redirigés vers votre adresse.
 
@@ -19,6 +19,8 @@ et son positionnement injecté dans les prompts IA.
 > `email_log.product_key`) désigne une **variante de produit à l'intérieur d'une
 > marque** (pour Tag2Share : `keyring | card | stand`) et alimente les tokens
 > `{{product_*}}`. La **marque** est la colonne `brand`. Une marque possède N produits.
+> Ne pas confondre avec une **variante d'email** (`campaign_variants`), qui est une
+> version du **texte** d'une campagne, avec sa part d'envoi en %.
 
 ### Où vit la configuration
 
@@ -138,6 +140,56 @@ partagé. Le produit de `{{product_*}}` est donc résolu via les **segments de l
 campagne**, filtrés sur sa marque : [`lib/campaign-segments.ts`](lib/campaign-segments.ts).
 L'aperçu de l'UI utilise la même résolution (`resolved_segment`) que l'envoi réel.
 
+## Variantes d'email et proportions d'envoi
+
+Une campagne peut porter **plusieurs textes**, chacun avec sa part d'envoi en %
+(table [`campaign_variants`](supabase/migrations/0016_campaign_variants.sql)).
+La somme doit faire **100 %** : l'envoi est refusé sinon, côté interface comme
+côté serveur, une proportion réellement envoyée différente de celle affichée
+n'étant pas rattrapable.
+
+**La variante est figée sur le destinataire** (`campaign_recipients.variant_id`)
+avant l'envoi, jamais tirée au moment d'expédier. Deux raisons :
+
+- l'envoi se fait **par lots** (« envoyer les 25 prochains ») ; un tirage par lot
+  ferait dériver la proportion d'ensemble ;
+- l'opérateur doit pouvoir **prévisualiser et tester** le texte qui partira
+  réellement à un destinataire donné.
+
+La répartition ([`lib/campaign-variants.ts`](lib/campaign-variants.ts)) tient
+deux propriétés à la fois :
+
+- **totaux exacts** (méthode du plus fort reste) : 35/35/30 sur 100 destinataires
+  donne pile 35/35/30, là où un tirage aléatoire pondéré donnerait 32/38/30 ;
+- **ordre entrelacé** (A, B, C, A, B, C…) plutôt qu'en blocs : comme l'envoi prend
+  « les N premiers approuvés », un ordre en blocs enverrait un premier lot de 25
+  composé à 100 % de la variante A. Tout préfixe de la liste respecte donc déjà
+  les proportions.
+
+Elle est déterministe (aucun aléa) et rejouée à chaque synchro de campagne,
+chaque enregistrement de variantes et, en dernier recours, avant l'envoi. Les
+destinataires **déjà envoyés gardent leur variante** : l'historique d'un A/B
+n'est jamais réécrit.
+
+`email_log` gèle `variant_id` **et** `variant_name` à l'envoi : le journal reste
+lisible après suppression du texte perdant, et c'est la seule base pour comparer
+les performances des variantes.
+
+### Cascade du template
+
+Du plus spécifique au plus général, dans `buildRecipientEmail` :
+
+| Élément | Priorité |
+|---|---|
+| sujet / corps | override du destinataire (`custom_subject` / `custom_html`) → variante → template de la campagne |
+| accroche | variante (y compris `''` = masquée) → campagne |
+| produit mis en avant | variante → campagne (`campaigns.product`) → segment du prospect |
+
+Les **champs prospect requis** sont l'**union** des variables de *toutes* les
+variantes : un destinataire peut recevoir n'importe laquelle d'entre elles, et un
+`{{city}}` vide donnerait un email troué. Même règle côté interface et côté
+synchro serveur.
+
 ## Stack
 
 - Next.js 15 (App Router) · TypeScript · Tailwind
@@ -182,6 +234,19 @@ Puis les migrations, dans l'ordre. Pour le multi-marque :
 ⚠️ **À exécuter avant de lancer la version multi-marque** : les routes écrivent
 désormais la colonne `brand`.
 
+Pour les variantes d'email :
+
+- [`0016_campaign_variants.sql`](supabase/migrations/0016_campaign_variants.sql) -
+  table `campaign_variants` (texte + part en %), colonne `variant_id` sur
+  `campaign_recipients`, colonnes `variant_id` / `variant_name` sur `email_log`.
+  Chaque campagne existante reçoit **une variante à 100 %**, copie de son
+  template actuel ; ses destinataires et ses envois journalisés y sont rattachés.
+  Idempotent.
+
+⚠️ Tant que `0016` n'est pas appliquée, l'éditeur de campagne bascule
+automatiquement en mode **template unique** et affiche un rappel : rien ne casse,
+mais les proportions ne sont pas disponibles.
+
 ### 3. Vérifier les clés
 
 `.env.local` est déjà rempli (Supabase, Google, Gemini, Resend, `TEST_EMAIL`).
@@ -201,7 +266,7 @@ npm run dev
 | 1 | Gemini propose des types de business → vous cochez ceux à garder → « Valider » |
 | 2 | Pour chaque segment : pays + ville → « Rechercher » (Google Places, dédoublonnage auto) |
 | 3 | Sélection des prospects → « Enrichir » (email/contact/logo) ; champs corrigeables |
-| 4 | Créer une campagne → éditer le template → ajouter des destinataires → **Test** → **Approuver** → **Envoyer aux approuvés** |
+| 4 | Créer une campagne → éditer le(s) template(s) et leurs parts (total 100 %) → ajouter des destinataires → **Test** (une variante à la fois) → **Approuver** → **Envoyer aux approuvés** |
 
 ## Variables de fusion disponibles
 

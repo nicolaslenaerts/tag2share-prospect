@@ -11,6 +11,12 @@ import { activeBrand, requireSendableBrand } from "@/lib/brand-context";
 
 import { brandSender } from "@/lib/brand-sender";
 import { resolveProspectSegments } from "@/lib/campaign-segments";
+import {
+  loadVariants,
+  assignVariants,
+  weightsAreValid,
+  totalWeight,
+} from "@/lib/campaign-variants";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -30,7 +36,10 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
  *   défaut du code) via l'unique compte Resend,
  * - respecte un plafond quotidien et un délai PROPRES À LA MARQUE (la
  *   réputation d'envoi se joue par domaine),
- * - ajoute le lien + l'en-tête List-Unsubscribe signés pour cette marque.
+ * - ajoute le lien + l'en-tête List-Unsubscribe signés pour cette marque,
+ * - refuse de partir si les parts des variantes d'email ne font pas 100 % :
+ *   la proportion réellement envoyée différerait de celle affichée, et un
+ *   envoi ne se rattrape pas.
  */
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -77,6 +86,37 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     .eq("campaign_id", id)
     .in("id", recipientIds);
   if (error) return fail(error.message, 500);
+
+  // Variantes d'email. Une campagne sans variante part sur son propre template
+  // (comportement d'avant l'introduction des variantes) ; dès qu'il y en a, la
+  // somme des parts DOIT faire 100 - sinon la répartition réelle ne serait pas
+  // celle annoncée dans l'interface.
+  const variants = await loadVariants(db, id);
+  if (variants.length > 0 && !weightsAreValid(variants))
+    return fail(
+      `La répartition des variantes fait ${totalWeight(variants)} % au lieu de 100 %. ` +
+        "Corrigez les parts avant d'envoyer.",
+      409
+    );
+  // Filet de sécurité : un destinataire ajouté à la main n'est pas passé par la
+  // synchro et n'a donc pas encore de variante. On répartit avant d'envoyer
+  // plutôt que de tirer au vol, pour rester sur des quotas exacts.
+  if (variants.length > 0 && (recipients ?? []).some((r) => !r.variant_id)) {
+    try {
+      await assignVariants(db, id, variants);
+      const { data: refreshed } = await db
+        .from("campaign_recipients")
+        .select("id, variant_id")
+        .eq("campaign_id", id)
+        .in("id", recipientIds);
+      const fresh = new Map((refreshed ?? []).map((x) => [x.id, x.variant_id]));
+      for (const r of recipients ?? [])
+        if (fresh.has(r.id)) r.variant_id = fresh.get(r.id) ?? null;
+    } catch (e) {
+      return fail(`Répartition des variantes impossible : ${(e as Error).message}`, 500);
+    }
+  }
+  const variantById = new Map(variants.map((v) => [v.id, v]));
 
   // Produit mis en avant : résolu depuis un segment DE CETTE MARQUE auquel le
   // prospect est rattaché. On passe par les segments de la campagne plutôt que
@@ -199,10 +239,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     }
 
     const segment = segmentByProspect.get(r.prospect_id) ?? null;
+    // Variante figée sur la ligne du destinataire ; à défaut (campagne sans
+    // variante), le template de la campagne s'applique.
+    const variant = r.variant_id ? variantById.get(r.variant_id) ?? null : null;
     const unsub = unsubscribeUrl(to, brand, publicBase);
     const { subject, html } = buildRecipientEmail({
       brand,
       campaign,
+      variant,
       recipient: r,
       prospect: r.prospect,
       segment, // produit du segment de CETTE marque
@@ -239,6 +283,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         campaign,
         recipient: r,
         segment,
+        variant,
         toEmail: to,
         subject,
         status: "sent",
@@ -262,6 +307,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         campaign,
         recipient: r,
         segment,
+        variant,
         toEmail: to,
         subject,
         status: "failed",

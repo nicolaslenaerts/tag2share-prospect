@@ -10,6 +10,8 @@ type EmailRow = {
   prospect_name?: string | null;
   campaign_name?: string | null;
   segment_label?: string | null;
+  /** Nom de la variante d'email envoyée, figé (null = campagne sans variante). */
+  variant_name?: string | null;
   product_name?: string | null;
   subject?: string | null;
   status: string;
@@ -294,6 +296,13 @@ export function EmailLog() {
                         <div>{e.campaign_name || "—"}</div>
                         {e.segment_label && (
                           <div className="text-xs text-gray-400">{e.segment_label}</div>
+                        )}
+                        {/* Variante d'email : c'est elle qu'on compare quand une
+                            campagne teste plusieurs textes. */}
+                        {e.variant_name && (
+                          <div className="mt-0.5">
+                            <Badge>✉ {e.variant_name}</Badge>
+                          </div>
                         )}
                       </td>
                       <td className="p-3 text-gray-600">{e.product_name || "—"}</td>

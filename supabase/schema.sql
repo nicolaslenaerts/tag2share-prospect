@@ -117,12 +117,39 @@ create table if not exists public.campaign_segments (
 create index if not exists campaign_segments_segment_idx on public.campaign_segments(segment_id);
 
 -- ------------------------------------------------------------
+-- Variantes d'email d'une campagne (A/B/C...), avec proportion d'envoi.
+-- Une campagne peut porter PLUSIEURS textes ; `weight` est la part en % de
+-- destinataires qui reçoit cette variante (somme = 100, vérifiée côté app).
+-- La variante retenue est FIGÉE sur le destinataire avant l'envoi
+-- (campaign_recipients.variant_id) : l'envoi se fait par lots, un tirage à
+-- l'expédition ferait dériver la proportion d'ensemble.
+-- Le template de la campagne (campaigns.subject/body_html) reste le repli
+-- quand aucune variante n'est définie.
+-- ------------------------------------------------------------
+create table if not exists public.campaign_variants (
+  id            uuid primary key default gen_random_uuid(),
+  campaign_id   uuid not null references public.campaigns(id) on delete cascade,
+  name          text not null default 'Variante',
+  subject       text not null default '',
+  body_html     text not null default '',
+  email_tagline text,                          -- accroche sous le logo (null = défaut marque, '' = masquée)
+  product       text,                          -- produit mis en avant (override) ; null = celui de la campagne / du segment
+  weight        integer not null default 0 check (weight >= 0 and weight <= 100),
+  sort_order    integer not null default 0,    -- ordre d'affichage
+  created_at    timestamptz not null default now()
+);
+
+create index if not exists campaign_variants_campaign_idx
+  on public.campaign_variants(campaign_id, sort_order);
+
+-- ------------------------------------------------------------
 -- Destinataires : un prospect rattaché à une campagne, avec contenu adaptable
 -- ------------------------------------------------------------
 create table if not exists public.campaign_recipients (
   id              uuid primary key default gen_random_uuid(),
   campaign_id     uuid not null references public.campaigns(id) on delete cascade,
   prospect_id     uuid not null references public.prospects(id) on delete cascade,
+  variant_id      uuid references public.campaign_variants(id) on delete set null, -- variante d'email affectée (null = repli template campagne)
   to_email        text,                         -- email résolu (peut être édité)
   custom_subject  text,                         -- override du sujet pour ce prospect (sinon template)
   custom_html     text,                         -- override du corps pour ce prospect (sinon template rendu)
@@ -137,6 +164,7 @@ create table if not exists public.campaign_recipients (
 
 create index if not exists recipients_campaign_idx on public.campaign_recipients(campaign_id);
 create index if not exists recipients_status_idx   on public.campaign_recipients(status);
+create index if not exists recipients_variant_idx  on public.campaign_recipients(variant_id);
 
 -- ------------------------------------------------------------
 -- Liste de suppression : emails à ne JAMAIS recontacter
@@ -163,10 +191,12 @@ create table if not exists public.email_log (
   campaign_id   uuid references public.campaigns(id)            on delete set null,
   recipient_id  uuid references public.campaign_recipients(id)  on delete set null,
   segment_id    uuid references public.segments(id)             on delete set null,
+  variant_id    uuid references public.campaign_variants(id)    on delete set null,
   to_email      text not null,                 -- email destinataire (normalisé)
   prospect_name text,
   campaign_name text,
   segment_label text,
+  variant_name  text,                           -- nom de la variante d'email, figé
   product_key   text,                           -- card | keyring | stand
   product_name  text,
   product_price text,
@@ -184,6 +214,7 @@ create index if not exists email_log_prospect_idx on public.email_log(prospect_i
 create index if not exists email_log_email_idx    on public.email_log(to_email);
 create index if not exists email_log_campaign_idx on public.email_log(campaign_id);
 create index if not exists email_log_resend_idx   on public.email_log(resend_id);
+create index if not exists email_log_variant_idx  on public.email_log(variant_id);
 
 -- ------------------------------------------------------------
 -- RLS : l'app est mono-utilisateur et accède via service_role côté serveur.
@@ -196,6 +227,7 @@ alter table public.segment_prospects   enable row level security;
 alter table public.searches            enable row level security;
 alter table public.campaigns           enable row level security;
 alter table public.campaign_segments   enable row level security;
+alter table public.campaign_variants   enable row level security;
 alter table public.campaign_recipients enable row level security;
 alter table public.suppressions        enable row level security;
 alter table public.email_log           enable row level security;

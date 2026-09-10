@@ -2,9 +2,11 @@
  * Journal des emails envoyés (table email_log, append-only).
  *
  * Chaque email RÉELLEMENT envoyé à un prospect y crée une ligne, avec toutes
- * les infos figées au moment de l'envoi (marque, campagne, segment, produit
- * mis en avant, sujet, résultat). C'est la base pour savoir si un prospect a
- * déjà été contacté, par quelle marque, quelle campagne et avec quel produit.
+ * les infos figées au moment de l'envoi (marque, campagne, segment, variante
+ * d'email, produit mis en avant, sujet, résultat). C'est la base pour savoir si
+ * un prospect a déjà été contacté, par quelle marque, quelle campagne, avec
+ * quel texte et quel produit - et donc la seule pour comparer après coup les
+ * performances des variantes d'un A/B.
  *
  * Le logging ne doit JAMAIS faire échouer un envoi : toutes les écritures
  * avalent leurs erreurs (console.error) au lieu de les propager.
@@ -23,6 +25,8 @@ export async function logEmailSend(args: {
   campaign?: Record<string, any> | null;
   recipient?: Record<string, any> | null;
   segment?: { id?: string; label?: string; product?: string | null } | null;
+  /** Variante d'email envoyée (null = template de la campagne). */
+  variant?: { id?: string; name?: string; product?: string | null } | null;
   toEmail: string;
   subject: string;
   status: EmailLogStatus;
@@ -31,10 +35,11 @@ export async function logEmailSend(args: {
   replyTo?: string | null;
 }): Promise<void> {
   try {
-    // Produit mis en avant : override campagne prioritaire, sinon segment. Figé ici.
+    // Produit mis en avant : même cascade qu'au rendu (variante, puis campagne,
+    // puis segment). Figé ici.
     const product = getProduct(
       args.brand,
-      args.campaign?.product || args.segment?.product
+      args.variant?.product || args.campaign?.product || args.segment?.product
     );
     const db = supabaseAdmin();
     const { error } = await db.from("email_log").insert({
@@ -43,10 +48,14 @@ export async function logEmailSend(args: {
       campaign_id: args.campaign?.id ?? null,
       recipient_id: args.recipient?.id ?? null,
       segment_id: args.segment?.id ?? null,
+      variant_id: args.variant?.id ?? null,
       to_email: normEmail(args.toEmail),
       prospect_name: args.prospect?.name ?? null,
       campaign_name: args.campaign?.name ?? null,
       segment_label: args.segment?.label ?? null,
+      // Nom dupliqué volontairement : le journal doit rester lisible après
+      // suppression de la variante (le texte perdant d'un A/B est souvent jeté).
+      variant_name: args.variant?.name ?? null,
       product_key: product.key,
       product_name: product.name,
       product_price: product.price,
