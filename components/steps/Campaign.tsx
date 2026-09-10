@@ -228,6 +228,9 @@ function CampaignEditor({
   const [utmMedium, setUtmMedium] = useState(campaign.utm_medium ?? "");
   const [utmCampaign, setUtmCampaign] = useState(campaign.utm_campaign ?? "");
   const [saving, setSaving] = useState(false);
+  // Taille du lot d'envoi : nombre d'approuvés à envoyer maintenant.
+  // "" = tous. Les autres restent approuvés et partiront au prochain envoi.
+  const [batchInput, setBatchInput] = useState("");
   const [instruction, setInstruction] = useState("");
   const [improving, setImproving] = useState(false);
   const [drafting, setDrafting] = useState(false);
@@ -388,10 +391,27 @@ function CampaignEditor({
     (r) => r.status === "approved" && !isAlreadyContacted(r)
   );
 
+  // Lot courant = les N PREMIERS approuvés dans l'ordre de la liste (ordre
+  // d'ajout à la campagne, celui affiché plus haut). Un lot vide ou invalide
+  // vaut « tous », et on ne dépasse jamais le nombre d'approuvés restants.
+  const parsedBatch = parseInt(batchInput, 10);
+  const batchSize =
+    Number.isFinite(parsedBatch) && parsedBatch > 0
+      ? Math.min(parsedBatch, approved.length)
+      : approved.length;
+  const toSend = approved.slice(0, batchSize);
+  const remainingAfter = approved.length - toSend.length;
+
   async function sendAll() {
-    if (approved.length === 0) return;
+    if (toSend.length === 0) return;
+    const rest = remainingAfter;
     const typed = prompt(
-      `⚠️ Envoi RÉEL à ${approved.length} prospect(s).\nTapez ENVOYER pour confirmer.`
+      `⚠️ Envoi RÉEL à ${toSend.length} prospect(s)` +
+        (rest > 0
+          ? ` (les ${toSend.length} premiers sur ${approved.length} approuvés ; ` +
+            `${rest} resteront à envoyer)`
+          : "") +
+        `.\nTapez ENVOYER pour confirmer.`
     );
     if (typed !== "ENVOYER") {
       setMsg("Envoi annulé.");
@@ -401,12 +421,13 @@ function CampaignEditor({
       `/api/campaigns/${campaign.id}/send`,
       {
         method: "POST",
-        json: { recipientIds: approved.map((x) => x.id), confirm: true },
+        json: { recipientIds: toSend.map((x) => x.id), confirm: true },
       }
     );
     const skipped = r.results.filter((x) => x.skipped || x.error).length;
     let m = `${r.sent} email(s) envoyé(s).`;
     if (skipped) m += ` ${skipped} ignoré(s) (désinscrits, invalides ou non envoyés).`;
+    if (rest > 0) m += ` ${rest} approuvé(s) restent à envoyer.`;
     if (r.capped) m += " Plafond quotidien atteint : relancez demain pour le reste.";
     setMsg(m);
     reload();
@@ -660,17 +681,70 @@ function CampaignEditor({
         setMsg={setMsg}
       />
 
-      <Card className="flex items-center justify-between p-5">
-        <div>
-          <h3 className="font-bold">Envoi final</h3>
-          <p className="text-sm text-gray-500">
-            Seuls les destinataires <b>approuvés</b> ({approved.length}) seront envoyés.
-            Confirmation explicite requise.
-          </p>
+      <Card className="p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="font-bold">Envoi final</h3>
+            <p className="text-sm text-gray-500">
+              Seuls les destinataires <b>approuvés</b> ({approved.length}) seront envoyés.
+              Confirmation explicite requise.
+            </p>
+          </div>
+          <Button variant="danger" onClick={sendAll} disabled={toSend.length === 0}>
+            {remainingAfter > 0
+              ? `Envoyer les ${toSend.length} prochains`
+              : `Envoyer aux ${approved.length} approuvés`}
+          </Button>
         </div>
-        <Button variant="danger" onClick={sendAll} disabled={approved.length === 0}>
-          Envoyer aux {approved.length} approuvés
-        </Button>
+
+        {approved.length > 0 && (
+          <div className="mt-4 border-t border-gray-200 pt-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-sm text-gray-500">Envoyer par lot :</span>
+              {[10, 25, 50, 100]
+                .filter((n) => n < approved.length)
+                .map((n) => (
+                  <Button
+                    key={n}
+                    variant={batchInput === String(n) ? "outline" : "ghost"}
+                    onClick={() => setBatchInput(String(n))}
+                  >
+                    {n}
+                  </Button>
+                ))}
+              <Button
+                variant={batchSize === approved.length ? "outline" : "ghost"}
+                onClick={() => setBatchInput("")}
+              >
+                Tous ({approved.length})
+              </Button>
+              <Input
+                type="number"
+                min={1}
+                max={approved.length}
+                value={batchInput}
+                onChange={(e) => setBatchInput(e.target.value)}
+                placeholder="nb"
+                className="w-24"
+                aria-label="Nombre d'emails à envoyer maintenant"
+              />
+            </div>
+            <p className="mt-2 text-xs text-gray-400">
+              {remainingAfter > 0 ? (
+                <>
+                  Les <b>{toSend.length} premiers</b> approuvés de la liste partiront
+                  maintenant ; <b>{remainingAfter}</b> resteront approuvés et pourront
+                  être envoyés au prochain lot.
+                </>
+              ) : (
+                <>
+                  Les <b>{approved.length}</b> approuvés partiront en une seule fois.
+                  Indiquez un nombre ci-dessus pour n'envoyer qu'un lot.
+                </>
+              )}
+            </p>
+          </div>
+        )}
       </Card>
 
       <Card className="flex items-center justify-between p-5">
