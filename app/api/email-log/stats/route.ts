@@ -31,10 +31,12 @@ const REFRESHABLE = new Set([null, "delivered", "opened"]);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
- * Calcule les taux de délivrabilité par campagne sur les emails envoyés ces
- * 6 derniers jours, POUR LA MARQUE ACTIVE. Rafraîchit d'abord le dernier
- * événement de chaque email éligible depuis l'API Resend (compte unique,
- * partagé par toutes les marques), puis agrège.
+ * Calcule les taux de délivrabilité sur les emails envoyés ces 6 derniers
+ * jours, POUR LA MARQUE ACTIVE, par campagne PUIS par variante de template
+ * à l'intérieur de chaque campagne (c'est la lecture A/B : même campagne,
+ * même période, textes différents). Rafraîchit d'abord le dernier événement
+ * de chaque email éligible depuis l'API Resend (compte unique, partagé par
+ * toutes les marques), puis agrège.
  */
 export async function POST(req: Request) {
   const brand = await activeBrand(req);
@@ -44,7 +46,9 @@ export async function POST(req: Request) {
   // Emails réellement envoyés dans la fenêtre (les échecs n'ont pas de taux).
   const { data: rows, error } = await db
     .from("email_log")
-    .select("id, campaign_id, campaign_name, to_email, resend_id, event, created_at")
+    .select(
+      "id, campaign_id, campaign_name, variant_id, variant_name, to_email, resend_id, event, created_at"
+    )
     .eq("brand", brand.slug)
     .eq("status", "sent")
     .gte("created_at", since)
@@ -100,76 +104,139 @@ export async function POST(req: Request) {
     for (const s of sup ?? []) unsubscribedSet.add(normEmail(s.email));
   }
 
-  // 3) Agrégation par campagne. L'event du journal ne stocke que le dernier
-  // événement (rang le plus élevé) : delivered ⊂ opened ⊂ clicked.
-  type Agg = {
-    campaign_id: string | null;
-    campaign_name: string;
+  // 3) Agrégation à deux niveaux : campagne, puis variante de template.
+  //    L'event du journal ne stocke que le dernier événement (rang le plus
+  //    élevé) : delivered ⊂ opened ⊂ clicked.
+  //
+  //    Les compteurs sont accumulés par une seule fonction, appelée pour la
+  //    campagne ET pour la variante. Dupliquer la règle d'inclusion aux deux
+  //    niveaux la ferait tôt ou tard diverger, et des sous-totaux qui ne
+  //    recomposent pas le total de la campagne sont pires que pas de détail.
+  type Counters = {
     sent: number;
     delivered: number;
     opened: number;
     clicked: number;
     bounced: number;
     complained: number;
-    unsubscribed: number;
+    /** Emails désinscrits, dédoublonnés : un même contact peut avoir reçu
+     *  plusieurs emails dans la fenêtre, il ne compte qu'une désinscription. */
     _unsubEmails: Set<string>;
   };
-  const byCampaign = new Map<string, Agg>();
-  const keyOf = (r: { campaign_id: string | null }) => r.campaign_id ?? "__none__";
+
+  const newCounters = (): Counters => ({
+    sent: 0,
+    delivered: 0,
+    opened: 0,
+    clicked: 0,
+    bounced: 0,
+    complained: 0,
+    _unsubEmails: new Set(),
+  });
+
+  const accumulate = (c: Counters, ev: string | null, email: string) => {
+    c.sent++;
+    if (ev === "delivered" || ev === "opened" || ev === "clicked") c.delivered++;
+    if (ev === "opened" || ev === "clicked") c.opened++;
+    if (ev === "clicked") c.clicked++;
+    if (ev === "bounced") c.bounced++;
+    if (ev === "complained") c.complained++;
+    if (email && unsubscribedSet.has(email)) c._unsubEmails.add(email);
+  };
+
+  const pct = (n: number, d: number) => (d > 0 ? Math.round((n / d) * 1000) / 10 : 0);
+
+  /** Counters → payload public : compteurs + taux en % des envoyés. */
+  const shape = (c: Counters) => {
+    const unsubscribed = c._unsubEmails.size;
+    return {
+      sent: c.sent,
+      delivered: c.delivered,
+      opened: c.opened,
+      clicked: c.clicked,
+      bounced: c.bounced,
+      complained: c.complained,
+      unsubscribed,
+      rates: {
+        delivered: pct(c.delivered, c.sent),
+        opened: pct(c.opened, c.sent),
+        clicked: pct(c.clicked, c.sent),
+        bounced: pct(c.bounced, c.sent),
+        unsubscribed: pct(unsubscribed, c.sent),
+      },
+    };
+  };
+
+  type VariantAgg = Counters & { variant_id: string | null; variant_name: string };
+  type CampaignAgg = Counters & {
+    campaign_id: string | null;
+    campaign_name: string;
+    variants: Map<string, VariantAgg>;
+  };
+
+  const NO_KEY = "__none__";
+  const NO_VARIANT_LABEL = "(sans variante)";
+  const byCampaign = new Map<string, CampaignAgg>();
 
   for (const r of sent) {
-    const key = keyOf(r);
-    let a = byCampaign.get(key);
-    if (!a) {
-      a = {
+    const cKey = r.campaign_id ?? NO_KEY;
+    let camp = byCampaign.get(cKey);
+    if (!camp) {
+      camp = {
+        ...newCounters(),
         campaign_id: r.campaign_id ?? null,
         campaign_name: r.campaign_name || "(sans campagne)",
-        sent: 0,
-        delivered: 0,
-        opened: 0,
-        clicked: 0,
-        bounced: 0,
-        complained: 0,
-        unsubscribed: 0,
-        _unsubEmails: new Set(),
+        variants: new Map(),
       };
-      byCampaign.set(key, a);
+      byCampaign.set(cKey, camp);
     }
-    a.sent++;
 
     // Event courant : valeur fraîchement sondée si dispo, sinon celle du journal.
     const ev =
       (r.resend_id && liveEvent.get(r.resend_id as string)) ||
       (r.event as string | null) ||
       null;
-
-    if (ev === "delivered" || ev === "opened" || ev === "clicked") a.delivered++;
-    if (ev === "opened" || ev === "clicked") a.opened++;
-    if (ev === "clicked") a.clicked++;
-    if (ev === "bounced") a.bounced++;
-    if (ev === "complained") a.complained++;
-
     const email = normEmail(r.to_email);
-    if (email && unsubscribedSet.has(email)) a._unsubEmails.add(email);
+
+    accumulate(camp, ev, email);
+
+    const vKey = (r.variant_id as string | null) ?? NO_KEY;
+    let variant = camp.variants.get(vKey);
+    if (!variant) {
+      variant = {
+        ...newCounters(),
+        variant_id: (r.variant_id as string | null) ?? null,
+        variant_name: (r.variant_name as string | null) || NO_VARIANT_LABEL,
+      };
+      camp.variants.set(vKey, variant);
+    }
+    accumulate(variant, ev, email);
   }
 
-  const pct = (n: number, d: number) => (d > 0 ? Math.round((n / d) * 1000) / 10 : 0);
-
   const campaigns = Array.from(byCampaign.values())
-    .map((a) => {
-      a.unsubscribed = a._unsubEmails.size;
-      const { _unsubEmails, ...rest } = a;
-      return {
-        ...rest,
-        rates: {
-          delivered: pct(a.delivered, a.sent),
-          opened: pct(a.opened, a.sent),
-          clicked: pct(a.clicked, a.sent),
-          bounced: pct(a.bounced, a.sent),
-          unsubscribed: pct(a.unsubscribed, a.sent),
-        },
-      };
-    })
+    .map((camp) => ({
+      campaign_id: camp.campaign_id,
+      campaign_name: camp.campaign_name,
+      ...shape(camp),
+      // Tri par NOM (A, B, C…) et non par volume : les variantes se lisent en
+      // comparaison côte à côte, et un tri par volume les ferait sauter de
+      // place d'un calcul à l'autre. « (sans variante) » ferme la liste.
+      variants: Array.from(camp.variants.values())
+        .sort((x, y) => {
+          const xNone = x.variant_id === null;
+          const yNone = y.variant_id === null;
+          if (xNone !== yNone) return xNone ? 1 : -1;
+          return x.variant_name.localeCompare(y.variant_name, "fr");
+        })
+        .map((v) => ({
+          variant_id: v.variant_id,
+          variant_name: v.variant_name,
+          ...shape(v),
+          /** Part réelle des envois de la campagne : permet de vérifier que la
+           *  répartition observée colle aux poids configurés (35/35/30…). */
+          share: pct(v.sent, camp.sent),
+        })),
+    }))
     .sort((x, y) => y.sent - x.sent);
 
   return ok({

@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import Link from "next/link";
 import { api } from "@/lib/api";
 import { Button, Card, Input, Badge, Spinner } from "@/components/ui";
@@ -29,9 +29,8 @@ type Resp = {
   totalPages: number;
 };
 
-type CampaignStat = {
-  campaign_id: string | null;
-  campaign_name: string;
+/** Compteurs + taux, identiques au niveau campagne et au niveau variante. */
+type Counts = {
   sent: number;
   delivered: number;
   opened: number;
@@ -48,6 +47,19 @@ type CampaignStat = {
   };
 };
 
+type VariantStat = Counts & {
+  variant_id: string | null;
+  variant_name: string;
+  /** Part des envois de la campagne, à comparer aux poids configurés. */
+  share: number;
+};
+
+type CampaignStat = Counts & {
+  campaign_id: string | null;
+  campaign_name: string;
+  variants: VariantStat[];
+};
+
 type StatsResp = {
   windowDays: number;
   totalSent: number;
@@ -55,6 +67,15 @@ type StatsResp = {
   refreshErrors: number;
   campaigns: CampaignStat[];
 };
+
+/** Cellule « 42,9 % (12) » : le taux porte la lecture, le brut la confiance. */
+function RateCell({ rate, count }: { rate: number; count: number }) {
+  return (
+    <td className="p-3 text-right tabular-nums">
+      {rate}% <span className="text-xs text-gray-400">({count})</span>
+    </td>
+  );
+}
 
 const EVENT_LABEL: Record<string, string> = {
   delivered: "Délivré",
@@ -168,10 +189,13 @@ export function EmailLog() {
         <Card className="p-5">
           <div className="mb-3">
             <h3 className="text-base font-bold">
-              Taux par campagne · {stats.totalSent} email(s) envoyé(s) sur {stats.windowDays} jours
+              Taux par campagne et variante · {stats.totalSent} email(s) envoyé(s) sur{" "}
+              {stats.windowDays} jours
             </h3>
             <p className="text-xs text-gray-500">
-              Taux en % des emails envoyés. {stats.refreshed} statut(s) rafraîchi(s) depuis Resend
+              Taux en % des emails envoyés. Les lignes indentées détaillent les variantes de
+              template, avec leur part réelle des envois. {stats.refreshed} statut(s) rafraîchi(s)
+              depuis Resend
               {stats.refreshErrors > 0 && ` · ${stats.refreshErrors} en échec`}.
             </p>
           </div>
@@ -195,33 +219,40 @@ export function EmailLog() {
                 </thead>
                 <tbody>
                   {stats.campaigns.map((c) => (
-                    <tr
-                      key={c.campaign_id ?? c.campaign_name}
-                      className="border-t border-gray-100"
-                    >
-                      <td className="p-3 font-medium">{c.campaign_name}</td>
-                      <td className="p-3 text-right tabular-nums">{c.sent}</td>
-                      <td className="p-3 text-right tabular-nums">
-                        {c.rates.delivered}%{" "}
-                        <span className="text-xs text-gray-400">({c.delivered})</span>
-                      </td>
-                      <td className="p-3 text-right tabular-nums">
-                        {c.rates.opened}%{" "}
-                        <span className="text-xs text-gray-400">({c.opened})</span>
-                      </td>
-                      <td className="p-3 text-right tabular-nums">
-                        {c.rates.clicked}%{" "}
-                        <span className="text-xs text-gray-400">({c.clicked})</span>
-                      </td>
-                      <td className="p-3 text-right tabular-nums">
-                        {c.rates.bounced}%{" "}
-                        <span className="text-xs text-gray-400">({c.bounced})</span>
-                      </td>
-                      <td className="p-3 text-right tabular-nums">
-                        {c.rates.unsubscribed}%{" "}
-                        <span className="text-xs text-gray-400">({c.unsubscribed})</span>
-                      </td>
-                    </tr>
+                    <Fragment key={c.campaign_id ?? c.campaign_name}>
+                      <tr className="border-t border-gray-100">
+                        <td className="p-3 font-medium">{c.campaign_name}</td>
+                        <td className="p-3 text-right tabular-nums">{c.sent}</td>
+                        <RateCell rate={c.rates.delivered} count={c.delivered} />
+                        <RateCell rate={c.rates.opened} count={c.opened} />
+                        <RateCell rate={c.rates.clicked} count={c.clicked} />
+                        <RateCell rate={c.rates.bounced} count={c.bounced} />
+                        <RateCell rate={c.rates.unsubscribed} count={c.unsubscribed} />
+                      </tr>
+                      {/* Détail par variante, seulement s'il y a vraiment de quoi
+                          comparer : une campagne à variante unique donnerait une
+                          sous-ligne strictement identique à sa ligne campagne. */}
+                      {c.variants.length > 1 &&
+                        c.variants.map((v) => (
+                          <tr
+                            key={v.variant_id ?? `${c.campaign_id}-none`}
+                            className="border-t border-gray-50 bg-gray-50/60 text-gray-600"
+                          >
+                            <td className="py-2 pl-8 pr-3">
+                              <span className="text-gray-400">↳</span> {v.variant_name}
+                            </td>
+                            <td className="py-2 px-3 text-right tabular-nums">
+                              {v.sent}{" "}
+                              <span className="text-xs text-gray-400">({v.share}%)</span>
+                            </td>
+                            <RateCell rate={v.rates.delivered} count={v.delivered} />
+                            <RateCell rate={v.rates.opened} count={v.opened} />
+                            <RateCell rate={v.rates.clicked} count={v.clicked} />
+                            <RateCell rate={v.rates.bounced} count={v.bounced} />
+                            <RateCell rate={v.rates.unsubscribed} count={v.unsubscribed} />
+                          </tr>
+                        ))}
+                    </Fragment>
                   ))}
                 </tbody>
               </table>
