@@ -16,6 +16,7 @@ import {
   evenWeights,
   TOTAL_WEIGHT,
   type CampaignVariant,
+  isRedistributable,
 } from "@/lib/campaign-variants";
 import { useBrand } from "@/components/BrandProvider";
 import { brandColor, brandOnColor } from "@/lib/brands/types";
@@ -285,7 +286,8 @@ function CampaignEditor({
 }: {
   campaign: Campaign; recipients: Recipient[]; prospects: Prospect[];
   allSegments: Segment[];
-  onBack: () => void; reload: () => void; msg: string; setMsg: (s: string) => void;
+  onBack: () => void; reload: () => void | Promise<void>;
+  msg: string; setMsg: (s: string) => void;
 }) {
   const brand = useBrand();
   // Brouillon LOCAL des variantes : on modifie les textes ET les parts, puis on
@@ -324,6 +326,15 @@ function CampaignEditor({
 
   const weightTotal = totalWeight(variants);
   const weightsOk = weightTotal === TOTAL_WEIGHT;
+
+  // Parts éditées ici mais pas encore en base. Sans ce repère, rien à l'écran
+  // ne distingue « j'ai tapé 80 » de « 80 est appliqué » : c'est précisément
+  // l'ambiguïté qui fait croire qu'un changement de part reste sans effet.
+  const savedWeights = new Map(
+    (campaign.variants ?? []).map((v) => [v.id, v.weight])
+  );
+  const weightsDirty =
+    !legacy && variants.some((v) => savedWeights.get(v.id) !== v.weight);
   const [utmSource, setUtmSource] = useState(campaign.utm_source ?? "");
   const [utmMedium, setUtmMedium] = useState(campaign.utm_medium ?? "");
   const [utmCampaign, setUtmCampaign] = useState(campaign.utm_campaign ?? "");
@@ -423,7 +434,10 @@ function CampaignEditor({
               `l'envoi restera bloqué jusqu'à correction.`
         );
       }
-      reload();
+      // Attendu : `saving` doit rester vrai jusqu'à ce que les destinataires
+      // rechargés reflètent la nouvelle répartition, sinon l'indicateur
+      // « non enregistré » se rallume une fraction de seconde après le succès.
+      await reload();
     } catch (e) {
       setMsg("Erreur : " + (e as Error).message);
     } finally {
@@ -604,18 +618,34 @@ function CampaignEditor({
   );
 
   // Répartition RÉELLE, telle qu'elle est figée sur les lignes destinataires.
-  // À comparer aux parts cibles : les deux ne coïncident qu'après
-  // enregistrement (les parts éditées ici ne sont pas encore appliquées).
-  const variantStats = new Map<string, { assigned: number; sent: number }>();
+  //
+  // Deux populations à ne SURTOUT pas additionner :
+  //  - `pending` : ce qu'il reste à envoyer, la seule chose que la répartition
+  //    gouverne encore (mêmes statuts que assignVariants, d'où la constante
+  //    partagée). C'est cette colonne qui doit converger vers les parts visées.
+  //  - `sent`    : les envois déjà partis, figés à la répartition qui avait
+  //    cours ce jour-là et jamais réécrits.
+  //
+  // Les mélanger était le défaut d'origine : dès qu'une partie de la liste
+  // était partie, changer les parts ne faisait presque plus bouger le chiffre
+  // affiché, et la répartition semblait ignorée alors qu'elle s'appliquait bien
+  // aux destinataires restants.
+  const variantStats = new Map<string, { pending: number; sent: number }>();
   let unassignedCount = 0;
+  let pendingTotal = 0;
   for (const r of recipients) {
     if (r.status === "excluded") continue;
+    const pending = isRedistributable(r.status);
+    if (pending) pendingTotal += 1;
     if (!r.variant?.id) {
-      unassignedCount += 1;
+      // Seuls les destinataires encore en jeu seront rattrapés par la
+      // prochaine répartition : signaler les autres entretiendrait une alerte
+      // que plus aucun enregistrement ne peut faire disparaître.
+      if (pending) unassignedCount += 1;
       continue;
     }
-    const cur = variantStats.get(r.variant.id) ?? { assigned: 0, sent: 0 };
-    cur.assigned += 1;
+    const cur = variantStats.get(r.variant.id) ?? { pending: 0, sent: 0 };
+    if (pending) cur.pending += 1;
     if (r.status === "sent") cur.sent += 1;
     variantStats.set(r.variant.id, cur);
   }
@@ -785,14 +815,14 @@ function CampaignEditor({
                 <tr>
                   <th className="py-2">Variante</th>
                   <th className="py-2 w-28">Part visée</th>
-                  <th className="py-2">Affectés</th>
-                  <th className="py-2">Envoyés</th>
+                  <th className="py-2">Reste à envoyer</th>
+                  <th className="py-2">Déjà envoyés</th>
                   <th className="py-2"></th>
                 </tr>
               </thead>
               <tbody>
                 {variants.map((v) => {
-                  const st = variantStats.get(v.id) ?? { assigned: 0, sent: 0 };
+                  const st = variantStats.get(v.id) ?? { pending: 0, sent: 0 };
                   const isActive = active?.id === v.id;
                   return (
                     <tr
@@ -827,14 +857,9 @@ function CampaignEditor({
                         </div>
                       </td>
                       <td className="py-2 text-gray-500">
-                        {st.assigned}
+                        {st.pending}
                         <span className="ml-1 text-xs text-gray-400">
-                          ({Math.round(
-                            (st.assigned /
-                              Math.max(1, recipients.filter((r) => r.status !== "excluded").length)) *
-                              100
-                          )}{" "}
-                          %)
+                          ({Math.round((st.pending / Math.max(1, pendingTotal)) * 100)} %)
                         </span>
                       </td>
                       <td className="py-2 text-gray-500">{st.sent || "-"}</td>
@@ -864,15 +889,29 @@ function CampaignEditor({
             )}
             {unassignedCount > 0 && (
               <p className="mt-2 text-xs text-amber-600">
-                {unassignedCount} destinataire(s) sans variante : ils seront répartis au
-                prochain enregistrement (ou juste avant l'envoi).
+                {unassignedCount} destinataire(s) encore à envoyer sont sans variante :
+                ils seront répartis au prochain enregistrement (ou juste avant l'envoi).
               </p>
             )}
+            {/* Le geste (taper une part) et sa validation doivent vivre dans la
+                même carte. L'unique bouton était en bas de l'éditeur de texte,
+                dans la colonne d'à côté : on modifiait une part sans jamais
+                voir ce qui pouvait l'appliquer. */}
+            <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-gray-100 pt-3">
+              <Button onClick={saveTemplate} disabled={saving}>
+                {saving ? <Spinner /> : "Enregistrer les parts et répartir"}
+              </Button>
+              {weightsDirty && (
+                <Badge color="amber">Parts modifiées, non enregistrées</Badge>
+              )}
+            </div>
             <p className="mt-2 text-[11px] text-gray-400">
-              La colonne « Affectés » montre la répartition <b>déjà enregistrée</b> ; elle
-              ne suit les parts ci-dessus qu'après avoir cliqué « Enregistrer ». Les
-              destinataires déjà envoyés gardent leur variante, l'historique d'un A/B
-              n'est jamais réécrit.
+              « Reste à envoyer » est la répartition <b>déjà enregistrée</b> des{" "}
+              {pendingTotal} destinataire(s) encore en jeu : c'est elle qui doit rejoindre
+              les parts visées, et seulement après avoir cliqué « Enregistrer ». « Déjà
+              envoyés » est figé à la répartition qui avait cours au moment de l'envoi et
+              n'est jamais réécrit, sans quoi l'historique d'un A/B ne voudrait plus rien
+              dire : changer les parts ne le fera donc pas bouger.
             </p>
           </>
         )}
@@ -1068,8 +1107,9 @@ function CampaignEditor({
             </Button>
             {!legacy && (
               <span className="text-[11px] text-gray-400">
-                Enregistre les textes de <b>toutes</b> les variantes et leurs parts, puis
-                réaffecte les destinataires.
+                Même action que « Enregistrer les parts » plus haut : enregistre les
+                textes de <b>toutes</b> les variantes et leurs parts, puis réaffecte les
+                destinataires.
               </span>
             )}
           </div>

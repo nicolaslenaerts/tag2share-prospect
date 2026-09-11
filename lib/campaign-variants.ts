@@ -40,6 +40,23 @@ export type EffectiveTemplate = {
 
 export const TOTAL_WEIGHT = 100;
 
+/**
+ * Statuts de destinataire que la répartition GOUVERNE : ceux qui restent à
+ * partir. Tout le reste (`sent`, `failed`, `skipped`, `already_contacted`,
+ * `excluded`) porte une variante FIGÉE, fait passé ou ligne qui ne partira pas.
+ *
+ * Exporté, et non écrit en dur dans assignVariants, parce que l'interface doit
+ * mesurer EXACTEMENT la même population pour afficher la répartition réelle.
+ * Deux listes séparées finiraient par diverger, et l'écran annoncerait alors
+ * une répartition que l'envoi ne suit pas.
+ */
+export const REDISTRIBUTABLE_STATUSES = ["draft", "test_sent", "approved"] as const;
+
+/** Vrai si la variante de ce destinataire est encore susceptible de changer. */
+export function isRedistributable(status: string | null | undefined): boolean {
+  return (REDISTRIBUTABLE_STATUSES as readonly string[]).includes(status ?? "");
+}
+
 /** Somme des parts. Doit valoir 100 pour qu'un envoi soit autorisé. */
 export function totalWeight(variants: Pick<CampaignVariant, "weight">[]): number {
   return variants.reduce((n, v) => n + (Number(v.weight) || 0), 0);
@@ -222,7 +239,7 @@ export async function assignVariants(
     .from("campaign_recipients")
     .select("id, status, variant_id")
     .eq("campaign_id", campaignId)
-    .in("status", ["draft", "test_sent", "approved"])
+    .in("status", REDISTRIBUTABLE_STATUSES as unknown as string[])
     .order("created_at", { ascending: true });
   const ids = (recipients ?? []).map((r) => r.id);
   if (ids.length === 0) return 0;
