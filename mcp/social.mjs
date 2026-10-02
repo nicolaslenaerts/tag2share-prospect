@@ -45,16 +45,17 @@ const MEDIA_ARG = {
   maxItems: 12,
   description:
     "Médias dans l'ordre d'affichage. Chaque élément porte exactement une source : file (chemin " +
-    "local), url (http/https, téléchargée) ou storage_path (média déjà dans un post de la marque). " +
-    "Images JPG/PNG/WebP/GIF 10 Mo, vidéos MP4/MOV 100 Mo (50 Mo sur l'offre gratuite Supabase), " +
-    "PDF 100 Mo. La vignette d'un PDF ou d'une vidéo est calculée automatiquement.",
+    "local), url (https publique, téléchargée) ou storage_path (média déjà dans un post de la " +
+    "marque). Le type est lu dans le CONTENU du fichier : un fichier qui n'est pas une vraie image, " +
+    "vidéo ou PDF est refusé. Images JPG/PNG/WebP/GIF 10 Mo, vidéos MP4/MOV 100 Mo (50 Mo sur " +
+    "l'offre gratuite Supabase), PDF 100 Mo. La vignette d'un PDF ou d'une vidéo est calculée " +
+    "automatiquement.",
   items: {
     type: "object",
     properties: {
       file: { type: "string", description: "Chemin d'un fichier local." },
-      url: { type: "string", description: "URL http(s) d'un fichier à télécharger." },
+      url: { type: "string", description: "URL https d'un fichier à télécharger (adresses locales refusées)." },
       storage_path: { type: "string", description: "Chemin d'un média existant (get_social_post)." },
-      mime_type: { type: "string", description: "Force le type si l'extension ne le dit pas." },
       thumbnail_file: { type: "string", description: "Vignette PNG/JPEG à utiliser au lieu de celle calculée." },
     },
     additionalProperties: false,

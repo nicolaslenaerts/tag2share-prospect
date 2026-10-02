@@ -76,6 +76,21 @@ export function baseUrl() {
   return raw.replace(/\/+$/, "");
 }
 
+const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+/**
+ * Le jeton de session voyage dans chaque requête : en http, il circulerait en
+ * clair. https partout, sauf vers le poste lui-même (serveur de dev).
+ */
+export function isAllowedTarget(url) {
+  try {
+    const u = new URL(url);
+    return u.protocol === "https:" || (u.protocol === "http:" && LOCAL_HOSTS.has(u.hostname));
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Appelle une route de l'API. `brand` choisit la marque active de la requête.
  *
@@ -83,6 +98,11 @@ export function baseUrl() {
  * `{ error: "..." }` en français, c'est le message le plus utile à afficher.
  */
 export async function request(pathname, { method = "GET", body, brand } = {}) {
+  if (!isAllowedTarget(baseUrl()))
+    throw new Error(
+      `T2S_MCP_BASE_URL refusée (${baseUrl()}) : https obligatoire hors localhost, ` +
+        "sinon le jeton de connexion circulerait en clair."
+    );
   const cookies = [`${AUTH_COOKIE}=${authToken()}`];
   if (brand) cookies.push(`${BRAND_COOKIE}=${encodeURIComponent(brand)}`);
 

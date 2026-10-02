@@ -64,7 +64,11 @@ Pour viser la production depuis Claude Code, renseignez le bloc `env` de
 | `unschedule_social_post` | Retire le post de Buffer et le ramène en brouillon. |
 
 Médias : chaque élément est un fichier local (`file`), une URL (`url`,
-téléchargée) ou un média déjà stocké (`storage_path`). Le serveur lit les
+téléchargée) ou un média déjà stocké (`storage_path`). Tout finit dans un bucket
+PUBLIC, d'où deux garde-fous : le type est lu dans le **contenu** du fichier
+(signature des premiers octets, jamais l'extension ni un paramètre), et une URL
+se télécharge en **https seulement**, adresses du poste et du réseau local
+refusées au moment de la connexion, redirections comprises. Le serveur lit les
 dimensions, rend la vignette d'un PDF (exigée par LinkedIn) et d'une vidéo, puis
 envoie le fichier directement à Supabase par l'URL signée de l'API, comme
 l'éditeur. Vignettes : `pdftoppm` et `ffmpeg` s'ils sont installés

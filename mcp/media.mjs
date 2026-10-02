@@ -6,7 +6,7 @@
  * URL signée émise par l'API. On refait le même chemin, avec ce qu'offre une
  * machine plutôt qu'un navigateur :
  *
- *   - la source est un fichier local ou une URL http(s) (téléchargée d'abord) ;
+ *   - la source est un fichier local ou une URL https (téléchargée d'abord) ;
  *   - les dimensions d'une image se lisent dans son en-tête (PNG, JPEG, GIF,
  *     WebP), sans dépendance ;
  *   - la vignette d'un PDF (EXIGÉE par Buffer pour un document LinkedIn, qui ne
@@ -14,32 +14,183 @@
  *     les outils du poste : pdftoppm / ffmpeg s'ils sont installés, sinon sips /
  *     qlmanage sur macOS.
  *
- * Le type et la taille sont validés par l'API (/api/social/media/upload-url)
- * AVANT la lecture du fichier : une seule source de vérité, MEDIA_RULES.
+ * SÉCURITÉ. Tout ce qui part d'ici atterrit dans un bucket PUBLIC, et l'agent
+ * qui appelle l'outil peut avoir lu une page ou un document piégé. Deux règles :
+ *   - le type d'un fichier se lit dans son CONTENU (signature des premiers
+ *     octets), jamais dans son nom ni dans un paramètre : un fichier de config
+ *     ou une clé ne passe pas pour une image ;
+ *   - une URL se télécharge en https seulement, et l'adresse est contrôlée AU
+ *     MOMENT DE LA CONNEXION (redirections comprises) : rien sur le poste ni le
+ *     réseau local ne peut être aspiré puis publié.
+ *
+ * La taille est validée par l'API (/api/social/media/upload-url) AVANT la
+ * lecture complète du fichier : une seule source de vérité, MEDIA_RULES.
  */
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import dns from "node:dns";
+import { mkdtemp, open, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import https from "node:https";
+import { BlockList, isIP } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import { request } from "./client.mjs";
+import { isAllowedTarget, request } from "./client.mjs";
 
 const run = promisify(execFile);
 
-const MIME_BY_EXT = {
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".png": "image/png",
-  ".webp": "image/webp",
-  ".gif": "image/gif",
-  ".mp4": "video/mp4",
-  ".mov": "video/quicktime",
-  ".pdf": "application/pdf",
+const EXT_BY_MIME = {
+  "image/jpeg": ".jpg",
+  "image/png": ".png",
+  "image/webp": ".webp",
+  "image/gif": ".gif",
+  "video/mp4": ".mp4",
+  "video/quicktime": ".mov",
+  "application/pdf": ".pdf",
 };
 
-const EXT_BY_MIME = Object.fromEntries(
-  Object.entries(MIME_BY_EXT).map(([ext, mime]) => [mime, ext])
-);
+const ACCEPTED = "images JPG, PNG, WebP, GIF ; vidéos MP4, MOV ; PDF";
+
+/** Marques `ftyp` d'une vidéo MP4. HEIC, AVIF ou 3GP portent les leurs et sont refusés. */
+const MP4_BRANDS = new Set([
+  "isom", "iso2", "iso3", "iso4", "iso5", "iso6", "mp41", "mp42", "avc1",
+  "M4V ", "M4VH", "M4VP", "dash", "mmp4", "MSNV", "f4v ",
+]);
+
+/**
+ * Type réel d'un fichier d'après ses premiers octets, ou null s'il n'est pas
+ * un média accepté. C'est la seule source du type : l'extension ment
+ * facilement, le contenu beaucoup moins.
+ */
+export function sniff(buf) {
+  if (buf.length >= 8 && buf.readUInt32BE(0) === 0x89504e47 && buf.readUInt32BE(4) === 0x0d0a1a0a)
+    return "image/png";
+  if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return "image/jpeg";
+  if (buf.length >= 6 && /^GIF8[79]a$/.test(buf.toString("latin1", 0, 6))) return "image/gif";
+  if (buf.length >= 12 && buf.toString("latin1", 0, 4) === "RIFF" && buf.toString("latin1", 8, 12) === "WEBP")
+    return "image/webp";
+  if (buf.length >= 5 && buf.toString("latin1", 0, 5) === "%PDF-") return "application/pdf";
+  if (buf.length >= 12) {
+    const box = buf.toString("latin1", 4, 8);
+    if (box === "ftyp") {
+      const brand = buf.toString("latin1", 8, 12);
+      if (brand === "qt  ") return "video/quicktime";
+      return MP4_BRANDS.has(brand) ? "video/mp4" : null;
+    }
+    // Anciens .mov sans ftyp : le premier atome est directement moov, mdat...
+    if (["moov", "mdat", "wide", "free", "skip"].includes(box)) return "video/quicktime";
+  }
+  return null;
+}
+
+/** Premiers octets d'un fichier, sans le lire en entier. */
+async function head(abs, bytes = 4096) {
+  const fh = await open(abs, "r");
+  try {
+    const buf = Buffer.alloc(bytes);
+    const { bytesRead } = await fh.read(buf, 0, bytes, 0);
+    return buf.subarray(0, bytesRead);
+  } finally {
+    await fh.close();
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Adresses réseau                                                     */
+/* ------------------------------------------------------------------ */
+
+/** Plages qui ne doivent jamais être téléchargées : poste, réseau local, métadonnées cloud. */
+const PRIVATE = new BlockList();
+for (const [net, prefix] of [
+  ["0.0.0.0", 8], ["10.0.0.0", 8], ["100.64.0.0", 10], ["127.0.0.0", 8],
+  ["169.254.0.0", 16], ["172.16.0.0", 12], ["192.0.0.0", 24], ["192.168.0.0", 16],
+  ["198.18.0.0", 15], ["224.0.0.0", 4], ["240.0.0.0", 4],
+]) PRIVATE.addSubnet(net, prefix, "ipv4");
+// Pas de règle ::ffff:0:0/96 : BlockList compare déjà une adresse IPv4 mappée
+// (::ffff:127.0.0.1, ::ffff:7f00:1) aux règles IPv4, et une telle règle
+// bloquerait en retour TOUTES les adresses IPv4.
+for (const [net, prefix] of [
+  ["::", 128], ["::1", 128], ["64:ff9b::", 96], ["fc00::", 7], ["fe80::", 10], ["ff00::", 8],
+]) PRIVATE.addSubnet(net, prefix, "ipv6");
+
+/** Vrai si l'adresse IP est publique (joignable sur internet, hors réseau local). */
+export function isPublicAddress(ip) {
+  const family = isIP(ip);
+  if (!family) return false;
+  return !PRIVATE.check(ip, family === 4 ? "ipv4" : "ipv6");
+}
+
+/**
+ * Résolution DNS contrôlée, branchée sur la connexion elle-même : vérifier
+ * l'adresse avant le fetch puis laisser le fetch résoudre à nouveau laisserait
+ * un nom de domaine changer d'adresse entre les deux (DNS rebinding).
+ */
+function guardedLookup(hostname, options, callback) {
+  const opts = typeof options === "object" && options ? options : { family: options || 0 };
+  dns.lookup(hostname, { ...opts, all: true }, (err, addresses) => {
+    if (err) return callback(err);
+    const bad = addresses.find((a) => !isPublicAddress(a.address));
+    if (bad) return callback(new Error(`adresse ${bad.address} refusée (poste ou réseau local)`));
+    if (opts.all) return callback(null, addresses);
+    callback(null, addresses[0].address, addresses[0].family);
+  });
+}
+
+function checkUrl(raw, original = raw) {
+  let u;
+  try {
+    u = new URL(raw);
+  } catch {
+    throw new Error(`URL invalide : ${original}`);
+  }
+  if (u.protocol !== "https:") throw new Error(`URL refusée (https seulement) : ${original}`);
+  // Une IP littérale ne passe pas par la résolution DNS : contrôle direct.
+  const host = u.hostname.replace(/^\[|\]$/g, "");
+  if (isIP(host) && !isPublicAddress(host))
+    throw new Error(`URL refusée (adresse du poste ou du réseau local) : ${original}`);
+  return u;
+}
+
+function httpsGet(u) {
+  return new Promise((resolve, reject) => {
+    const req = https.get(u, { lookup: guardedLookup, timeout: 60_000 }, resolve);
+    req.on("timeout", () => req.destroy(new Error("délai dépassé")));
+    req.on("error", reject);
+  });
+}
+
+/** Téléchargement https, redirections suivies À LA MAIN pour contrôler chaque étape. */
+async function download(raw) {
+  let u = checkUrl(raw);
+  for (let hop = 0; hop <= 5; hop++) {
+    let res;
+    try {
+      res = await httpsGet(u);
+    } catch (e) {
+      throw new Error(`Téléchargement impossible (${e.message}) : ${raw}`);
+    }
+    if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location) {
+      res.resume();
+      u = checkUrl(new URL(res.headers.location, u).toString(), raw);
+      continue;
+    }
+    if (res.statusCode !== 200) {
+      res.resume();
+      throw new Error(`Téléchargement impossible (${res.statusCode}) : ${raw}`);
+    }
+    const chunks = [];
+    let size = 0;
+    for await (const chunk of res) {
+      size += chunk.length;
+      if (size > MAX_DOWNLOAD_BYTES) {
+        res.destroy();
+        throw new Error(`Fichier trop lourd (plus de ${MAX_DOWNLOAD_BYTES} octets) : ${raw}`);
+      }
+      chunks.push(chunk);
+    }
+    return { bytes: Buffer.concat(chunks), finalUrl: u };
+  }
+  throw new Error(`Trop de redirections : ${raw}`);
+}
 
 /** Au-delà, un téléchargement est abandonné (le plus gros média accepté fait 100 Mo). */
 const MAX_DOWNLOAD_BYTES = 110 * 1024 * 1024;
@@ -59,8 +210,11 @@ function expandHome(p) {
 /* Sources                                                             */
 /* ------------------------------------------------------------------ */
 
-/** Fichier local : chemin absolu, ou relatif au dossier courant. */
-async function fromFile(file, mimeOverride) {
+/**
+ * Fichier local : chemin absolu, ou relatif au dossier courant. Le type vient
+ * du contenu ; `name` remplace le nom affiché (fichier téléchargé).
+ */
+async function fromFile(file, name) {
   const abs = path.resolve(expandHome(String(file)));
   let info;
   try {
@@ -69,43 +223,31 @@ async function fromFile(file, mimeOverride) {
     throw new Error(`Fichier introuvable : ${abs}`);
   }
   if (!info.isFile()) throw new Error(`Pas un fichier : ${abs}`);
-  const filename = path.basename(abs);
-  const mime = (mimeOverride || MIME_BY_EXT[path.extname(abs).toLowerCase()] || "").toLowerCase();
-  if (!mime)
-    throw new Error(
-      `« ${filename} » : extension non reconnue. Acceptés : ${Object.keys(MIME_BY_EXT).join(", ")}.`
-    );
+  const shown = name || path.basename(abs);
+  const mime = sniff(await head(abs));
+  if (!mime) throw new Error(`« ${shown} » refusé : son contenu n'est pas un média accepté (${ACCEPTED}).`);
+  // Le nom suit le contenu : un PNG nommé .jpg repart en .png.
+  const ext = path.extname(shown);
+  const base = ext ? shown.slice(0, -ext.length) : shown;
+  const expected = EXT_BY_MIME[mime];
+  const filename = ext.toLowerCase() === expected || (expected === ".jpg" && ext.toLowerCase() === ".jpeg")
+    ? shown
+    : `${base || "media"}${expected}`;
   return { abs, filename, mime, size: info.size };
 }
 
-/** URL http(s) : téléchargée dans `dir`, puis traitée comme un fichier local. */
-async function fromUrl(url, dir, mimeOverride) {
-  let u;
+/** URL https : téléchargée dans `dir`, puis traitée comme un fichier local. */
+async function fromUrl(url, dir) {
+  const { bytes, finalUrl } = await download(url);
+  let urlName = "media";
   try {
-    u = new URL(url);
+    urlName = decodeURIComponent(path.basename(finalUrl.pathname)) || "media";
   } catch {
-    throw new Error(`URL invalide : ${url}`);
+    // Nom mal encodé : on garde le nom par défaut.
   }
-  if (u.protocol !== "https:" && u.protocol !== "http:")
-    throw new Error(`URL non prise en charge (http ou https seulement) : ${url}`);
-
-  const res = await fetch(u, { redirect: "follow" });
-  if (!res.ok) throw new Error(`Téléchargement impossible (${res.status}) : ${url}`);
-  const declared = Number(res.headers.get("content-length") || 0);
-  if (declared > MAX_DOWNLOAD_BYTES) throw new Error(`Fichier trop lourd (${declared} octets) : ${url}`);
-  const bytes = Buffer.from(await res.arrayBuffer());
-  if (bytes.length > MAX_DOWNLOAD_BYTES) throw new Error(`Fichier trop lourd (${bytes.length} octets) : ${url}`);
-
-  const headerMime = (res.headers.get("content-type") || "").split(";")[0].trim().toLowerCase();
-  const urlName = decodeURIComponent(path.basename(u.pathname)) || "media";
-  const mime = (mimeOverride || (EXT_BY_MIME[headerMime] ? headerMime : "") ||
-    MIME_BY_EXT[path.extname(urlName).toLowerCase()] || "").toLowerCase();
-  if (!mime) throw new Error(`Type de fichier non reconnu (${headerMime || "inconnu"}) : ${url}`);
-  const filename = path.extname(urlName) ? urlName : `${urlName}${EXT_BY_MIME[mime]}`;
-
-  const abs = path.join(dir, `dl-${Date.now()}-${filename.replace(/[^a-zA-Z0-9._-]+/g, "-")}`);
+  const abs = path.join(dir, `dl-${Date.now()}-${urlName.replace(/[^a-zA-Z0-9._-]+/g, "-").slice(-80)}`);
   await writeFile(abs, bytes);
-  return { abs, filename, mime, size: bytes.length };
+  return fromFile(abs, urlName);
 }
 
 /* ------------------------------------------------------------------ */
@@ -128,6 +270,8 @@ async function upload(brand, src, purpose = "media") {
       "L'instance visée ne renvoie pas d'URL d'upload complète (uploadUrl) : déployez la version " +
         "à jour de app/api/social/media/upload-url/route.ts."
     );
+  if (!isAllowedTarget(uploadUrl))
+    throw new Error("URL d'upload refusée : https obligatoire hors localhost.");
 
   const res = await fetch(uploadUrl, {
     method: "PUT",
@@ -283,9 +427,12 @@ async function videoInfo(src, dir) {
   return { width, height, thumbnail };
 }
 
-function thumbnailSource(file) {
-  const ext = path.extname(file).toLowerCase();
-  return { abs: file, filename: path.basename(file), mime: ext === ".png" ? "image/png" : "image/jpeg" };
+/** Vignette : même contrôle du contenu, et seulement PNG ou JPEG (règle de l'API). */
+async function thumbnailSource(file) {
+  const src = await fromFile(file);
+  if (src.mime !== "image/png" && src.mime !== "image/jpeg")
+    throw new Error(`Vignette « ${src.filename} » refusée : PNG ou JPEG attendu.`);
+  return src;
 }
 
 /* ------------------------------------------------------------------ */
@@ -344,7 +491,9 @@ export async function prepareMedia(brand, items, known = []) {
         continue;
       }
 
-      const src = item.file ? await fromFile(item.file, item.mime_type) : await fromUrl(item.url, dir, item.mime_type);
+      if (item.mime_type)
+        throw new Error(`${label} : mime_type n'est plus accepté, le type est lu dans le contenu du fichier.`);
+      const src = item.file ? await fromFile(item.file) : await fromUrl(item.url, dir);
       const kind = kindOf(src.mime);
       if (!kind) throw new Error(`${label} : type non pris en charge (${src.mime}).`);
 
@@ -369,14 +518,13 @@ export async function prepareMedia(brand, items, known = []) {
           );
       }
 
-      // Le fichier principal d'abord : s'il est refusé (type, taille), aucune
-      // vignette orpheline ne reste dans le bucket.
+      // Vignette contrôlée AVANT tout envoi, puis le fichier principal : s'il est
+      // refusé (type, taille), aucune vignette orpheline ne reste dans le bucket.
+      const t = thumbFile ? await thumbnailSource(thumbFile) : null;
       const main = await upload(brand, src);
       let thumbPath = null;
-      if (thumbFile) {
-        const t = thumbnailSource(thumbFile);
-        const tInfo = await stat(t.abs);
-        const thumb = await upload(brand, { ...t, size: tInfo.size }, "thumbnail");
+      if (t) {
+        const thumb = await upload(brand, t, "thumbnail");
         thumbPath = thumb.storagePath;
         if (kind === "document") ({ width, height } = imageSize(await readFile(t.abs)) ?? { width, height });
       }
