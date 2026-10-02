@@ -12,6 +12,7 @@ import { SLUG_RE } from "@/lib/brands/schema";
  * Exceptions publiques (validation propre côté handler) :
  *   - /api/unsubscribe       (lien signé dans les emails)
  *   - /api/webhooks/resend   (signature Resend)
+ *   - /api/cron/*            (CRON_SECRET, appels du planificateur)
  *   - /login + /api/auth/*   (parcours de connexion)
  *
  * Pose aussi l'en-tête `x-brand` d'après le cookie de préférence, pour que les
@@ -19,7 +20,7 @@ import { SLUG_RE } from "@/lib/brands/schema";
  * slug arbitraire depuis le réseau.
  */
 
-const PUBLIC_PREFIXES = ["/api/unsubscribe", "/api/webhooks/resend", "/login", "/api/auth"];
+const PUBLIC_PREFIXES = ["/api/unsubscribe", "/api/webhooks/resend", "/api/cron", "/login", "/api/auth"];
 
 function isPublic(pathname: string): boolean {
   return PUBLIC_PREFIXES.some(
@@ -65,7 +66,9 @@ export async function middleware(req: NextRequest) {
   const url = req.nextUrl.clone();
   url.pathname = "/login";
   url.search = "";
-  if (pathname !== "/") url.searchParams.set("from", pathname);
+  // La query est conservée : le lien « Ouvrir le post » des emails de
+  // notification (/social?post=...) doit survivre à la connexion.
+  if (pathname !== "/") url.searchParams.set("from", pathname + req.nextUrl.search);
   return NextResponse.redirect(url);
 }
 

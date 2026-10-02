@@ -190,12 +190,133 @@ variantes : un destinataire peut recevoir n'importe laquelle d'entre elles, et u
 `{{city}}` vide donnerait un email troué. Même règle côté interface et côté
 synchro serveur.
 
+## Réseaux sociaux (Buffer)
+
+Page **/social** : programmer des publications, réels et carrousels sur les
+réseaux de la marque active, via **Buffer**. Calendrier mensuel, liste filtrée
+(à venir, brouillons, publiés, échecs), éditeur avec aperçu Instagram /
+Facebook / LinkedIn, et email de notification à la publication.
+
+> 🔒 Rien ne part sans confirmation : résumé des canaux et de la date avant de
+> programmer, `PUBLIER` à taper pour une publication immédiate, `confirm: true`
+> exigé côté serveur. Le mode **Brouillon Buffer** crée le post dans Buffer sans
+> le publier, pour vérifier le rendu dans leur interface.
+
+### Une clé Buffer par marque
+
+Chaque marque connecte **son** compte Buffer dans **/social → Connexion** avec
+une clé API personnelle (Buffer → Settings → API → Create API key, disponible
+sur toutes les offres). Buffer n'ouvre plus d'applications OAuth : la clé
+personnelle est le seul chemin. Elle est validée auprès de Buffer, puis
+**chiffrée** (AES-256-GCM, `SOCIAL_ENCRYPTION_KEY`) avant d'être stockée dans
+`brand_buffer`. Elle ne repasse jamais par le navigateur et n'est jamais dans
+`BrandConfig` (sérialisé jusqu'au client).
+
+Les canaux (comptes Instagram, pages Facebook / LinkedIn) sont mis en cache
+dans `social_channels` : l'API Buffer est plafonnée à **100 requêtes / 15 min
+et 250 / jour** par clé en offre gratuite, le calendrier ne l'interroge donc
+jamais. Un canal se décoche s'il appartient à une autre marque (clé partagée).
+
+### Formats
+
+| Format | Instagram / Facebook | LinkedIn | Autres réseaux |
+|---|---|---|---|
+| Publication | texte + 1 visuel (Instagram : visuel obligatoire) | idem | idem |
+| Réel | 1 vidéo, publiée en **réel** | vidéo classique | vidéo classique |
+| Carrousel | **2 à 10 images** | **un PDF** (carrousel document) | les images |
+
+Le PDF LinkedIn s'importe, ou se **génère depuis les images** du carrousel (une
+page par image, à son ratio, dans le navigateur avec `pdf-lib`). Buffer exige une
+vignette de document : la page 1 est rendue par le navigateur (`pdfjs-dist`) à
+l'ajout du PDF.
+
+Toutes les règles vivent dans [`lib/social/rules.ts`](lib/social/rules.ts)
+(module pur) : l'éditeur affiche les problèmes au fil de la saisie, le serveur
+refuse la même chose avant le **premier** appel Buffer. Un post multi-réseaux
+est un `createPost` **par canal** : un refus au troisième canal laisserait sinon
+les deux premiers programmés.
+
+### Médias : bucket public `social-media`
+
+Buffer n'a pas d'upload : il **télécharge chaque URL au moment de la
+publication**, parfois des jours après la programmation. Une URL signée
+expirerait avant ; les médias sont donc dans un bucket Supabase **public**,
+sous des chemins `<marque>/<mois>/<uuid>-<fichier>` impossibles à deviner.
+L'outil vérifie que chaque URL répond avant de programmer.
+
+Le navigateur envoie les fichiers **directement** à Supabase Storage (URL
+d'upload signée émise par `/api/social/media/upload-url`) : une fonction
+serverless Vercel refuse les requêtes de plus de 4,5 Mo.
+
+⚠️ Offre gratuite Supabase : **50 Mo maximum par fichier** (vidéos comprises).
+
+### Modifier un post programmé
+
+Un post déjà dans Buffer est **retiré puis reprogrammé** avec les nouvelles
+valeurs (« Enregistrer et reprogrammer »). Si le retrait échoue, rien n'est
+modifié : pas de doublon. Un post publié n'est plus modifiable : on le
+**duplique**.
+
+### Suivi et notification par email
+
+[`lib/social/status.ts`](lib/social/status.ts) interroge Buffer pour les canaux
+dont la date est passée (au plus une fois par minute chacun, jamais au-delà de
+48 h), enregistre le statut et le **lien public** de la publication, puis
+envoie **un email par post** (identité d'envoi de la marque, via Resend) avec le
+lien de chaque réseau ou son erreur. Destinataire : l'adresse saisie sur le
+post, sinon celle de **/social → Connexion**, sinon l'adresse de test de la
+marque. `social_posts.notified_at` est posé par une écriture conditionnelle
+avant l'envoi : jamais deux emails pour une même programmation.
+
+Le suivi tourne à l'ouverture de /social et, surtout, par un **cron** à appeler
+toutes les 1 à 5 minutes :
+
+```
+GET https://<APP_URL>/api/cron/social-status
+Authorization: Bearer <CRON_SECRET>
+```
+
+Au choix :
+
+- **Vercel Cron** (offre Pro, l'offre Hobby est limitée à un passage par jour) :
+  `vercel.json` → `{ "crons": [{ "path": "/api/cron/social-status", "schedule": "*/5 * * * *" }] }`.
+  Vercel envoie lui-même `CRON_SECRET` en en-tête.
+- **Supabase pg_cron** (toutes offres), dans l'éditeur SQL :
+
+  ```sql
+  create extension if not exists pg_cron;
+  create extension if not exists pg_net;
+  select cron.schedule('social-status', '* * * * *', $$
+    select net.http_get(
+      url := 'https://marketing.tag2share.com/api/cron/social-status',
+      headers := jsonb_build_object('Authorization', 'Bearer <CRON_SECRET>'),
+      timeout_milliseconds := 60000
+    )
+  $$);
+  ```
+
+- tout planificateur externe (cron-job.org...) capable d'envoyer l'en-tête.
+
+Sans cron, les statuts et les emails n'avancent qu'à l'ouverture de /social.
+
+### Mise en place
+
+1. Exécuter [`0018_social_buffer.sql`](supabase/migrations/0018_social_buffer.sql)
+   dans l'éditeur SQL (tables + bucket public). Idempotent.
+2. Ajouter `SOCIAL_ENCRYPTION_KEY` (`openssl rand -hex 32`) et `CRON_SECRET`.
+   ⚠️ Changer `SOCIAL_ENCRYPTION_KEY` rend les clés enregistrées illisibles :
+   il faudrait reconnecter chaque marque.
+3. Brancher le cron (ci-dessus).
+4. Pour chaque marque : basculer dessus, **/social → Connexion**, coller sa clé
+   Buffer, vérifier les canaux et l'adresse de notification.
+
 ## Stack
 
 - Next.js 15 (App Router) · TypeScript · Tailwind
 - Supabase (projet `umabxfhfsacnxbbsxwat`) - stockage prospects / campagnes
 - Google Places API (New) + Gemini (`@google/generative-ai`)
 - Resend (domaine `mail.tag2share.com`)
+- Buffer (API GraphQL, une clé par marque) · `pdfjs-dist` et `pdf-lib` côté navigateur
 
 ## Mise en route
 

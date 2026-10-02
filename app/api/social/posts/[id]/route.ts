@@ -1,0 +1,85 @@
+import { supabaseAdmin } from "@/lib/supabase";
+import { ok, readJson } from "@/lib/http";
+import { activeBrand, requireBrand } from "@/lib/brand-context";
+import { socialFail } from "@/lib/social/http";
+import { schedulePost, unschedulePost } from "@/lib/social/schedule";
+import { deletePostRow, loadPost, parsePostInput, SocialError, writePost } from "@/lib/social/store";
+
+export const runtime = "nodejs";
+// Un appel Buffer par canal (et par post échu pour le suivi) : au-delà des 10 s par défaut.
+export const maxDuration = 60;
+
+type Params = { params: Promise<{ id: string }> };
+
+export async function GET(req: Request, { params }: Params) {
+  try {
+    const { id } = await params;
+    const brand = await activeBrand(req);
+    return ok({ post: await loadPost(supabaseAdmin(), brand.slug, id) });
+  } catch (err) {
+    return socialFail(err);
+  }
+}
+
+/**
+ * Modifie un post.
+ *
+ * Buffer n'offre pas de moyen fiable de modifier un post programmé avec ses
+ * médias : un post déjà dans Buffer est RETIRÉ puis reprogrammé avec les
+ * nouvelles valeurs, ce qui exige `reschedule: true` (confirmé dans
+ * l'interface). Si le retrait échoue, rien n'est modifié : pas de doublon.
+ * Un post déjà publié n'est plus modifiable (on le duplique).
+ */
+export async function PATCH(req: Request, { params }: Params) {
+  try {
+    const { id } = await params;
+    const brand = await requireBrand(req);
+    const db = supabaseAdmin();
+    const body = await readJson<Record<string, unknown> & { reschedule?: boolean }>(req);
+    const input = parsePostInput(brand.slug, body);
+    const post = await loadPost(db, brand.slug, id);
+
+    if (post.targets.some((t) => t.status === "published"))
+      throw new SocialError("Ce post est déjà publié : dupliquez-le pour le réutiliser.", 409);
+
+    if (!post.targets.some((t) => t.status === "scheduled"))
+      return ok({ post: await writePost(db, brand.slug, input, id) });
+
+    if (body.reschedule !== true)
+      throw new SocialError("Ce post est programmé dans Buffer : confirmez sa reprogrammation.", 409);
+
+    await unschedulePost(db, brand.slug, id);
+    await writePost(db, brand.slug, input, id);
+    try {
+      const { post: rescheduled, results } = await schedulePost(db, brand.slug, id, "schedule");
+      return ok({ post: rescheduled, results });
+    } catch (err) {
+      throw new SocialError(
+        `Modifications enregistrées, mais la reprogrammation a échoué : ${(err as Error).message} Le post est repassé en brouillon.`,
+        err instanceof SocialError ? err.status : 502
+      );
+    }
+  } catch (err) {
+    return socialFail(err);
+  }
+}
+
+/**
+ * Supprime le post. Ce qui est encore programmé est d'abord retiré de Buffer ;
+ * si ce retrait échoue, le post est conservé (il partirait sinon sans trace).
+ * Un post déjà publié reste en ligne sur le réseau.
+ */
+export async function DELETE(req: Request, { params }: Params) {
+  try {
+    const { id } = await params;
+    const brand = await requireBrand(req);
+    const db = supabaseAdmin();
+    let post = await loadPost(db, brand.slug, id);
+    if (post.targets.some((t) => t.status === "scheduled" || t.status === "buffer_draft"))
+      post = await unschedulePost(db, brand.slug, id);
+    await deletePostRow(db, brand.slug, post);
+    return ok({ deleted: true });
+  } catch (err) {
+    return socialFail(err);
+  }
+}

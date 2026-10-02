@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "tag2share": {
+      "command": "node",
+      "args": ["mcp/server.mjs"],
+      "env": {}
+    }
+  }
+}

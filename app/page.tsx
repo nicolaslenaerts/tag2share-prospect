@@ -21,6 +21,7 @@ export default function Home() {
     <div className="mx-auto max-w-6xl px-4 py-8">
       <AppHeader
         links={[
+          { href: "/social", label: "Réseaux sociaux" },
           { href: "/emails", label: "Emails envoyés" },
           { href: "/suppressions", label: "Liste de suppression" },
           { href: "/marques", label: "Marques" },
