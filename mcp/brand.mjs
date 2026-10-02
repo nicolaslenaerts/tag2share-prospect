@@ -64,16 +64,36 @@ export async function resolveBrandSlug(requested) {
   );
 }
 
-/** Marques exposées à l'agent, sans le détail d'administration. */
+/**
+ * Marques exposées à l'agent, sans le détail d'administration.
+ *
+ * `can_send` croise DEUX notions que l'API garde distinctes, et qu'un agent
+ * confondrait :
+ *   - `active`        : l'autorisation d'envoi, donnée à la main dans /marques ;
+ *   - `readiness.ok`  : la configuration est complète (domaine vérifié chez
+ *                       Resend, identité renseignée) — donc la marque PEUT être
+ *                       activée, pas qu'elle l'est.
+ * Les deux varient indépendamment : une marque peut être active avec une
+ * configuration incomplète, ou prête mais encore en brouillon. Seule leur
+ * conjonction autorise un envoi réel. On renvoie aussi les blocages, seule
+ * information actionnable quand `can_send` est faux.
+ */
 export function summarizeBrands(brands) {
-  return brands.map((b) => ({
-    slug: b.slug,
-    name: b.name,
-    active: b.active,
-    source: b.source,
-    product_count: b.productCount,
-    app_url: b.appUrl,
-    /** Envoi réel autorisé ? `active` seul ne suffit pas (domaine à vérifier). */
-    ready_to_send: b.readiness?.ok ?? null,
-  }));
+  return brands.map((b) => {
+    const configured = b.readiness?.ok ?? null;
+    return {
+      slug: b.slug,
+      name: b.name,
+      source: b.source,
+      product_count: b.productCount,
+      app_url: b.appUrl,
+      /** Autorisation d'envoi accordée par un humain. */
+      active: b.active,
+      /** Configuration d'expédition complète. */
+      sender_configured: configured,
+      /** Envoi réel possible : il faut les deux. */
+      can_send: b.active === true && configured === true,
+      blockers: b.readiness?.blockers?.length ? b.readiness.blockers : undefined,
+    };
+  });
 }

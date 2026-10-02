@@ -86,7 +86,7 @@ try {
     );
     ok(
       `${b.slug} — ${segments.length} segment(s), ${campaigns.length} campagne(s)` +
-        (b.ready_to_send ? "" : " [envoi réel non autorisé]")
+        (b.can_send ? "" : " [envoi réel impossible]")
     );
     const withVariants = campaigns.find((c) => c.variants?.length);
     if (withVariants) {
