@@ -276,26 +276,21 @@ GET https://<APP_URL>/api/cron/social-status
 Authorization: Bearer <CRON_SECRET>
 ```
 
-Au choix :
+**En place : Supabase pg_cron**, installé par
+[`0019_social_cron.sql`](supabase/migrations/0019_social_cron.sql) : un appel par
+minute vers `https://marketing.tag2share.com`. Le secret n'est pas dans la
+définition du job : il est lu à chaque passage dans le coffre Supabase (Vault,
+secret `social_cron_secret`, à créer avant la migration, voir son en-tête).
+Pour changer `CRON_SECRET`, mettre à jour le coffre ET Vercel.
 
-- **Vercel Cron** (offre Pro, l'offre Hobby est limitée à un passage par jour) :
-  `vercel.json` → `{ "crons": [{ "path": "/api/cron/social-status", "schedule": "*/5 * * * *" }] }`.
-  Vercel envoie lui-même `CRON_SECRET` en en-tête.
-- **Supabase pg_cron** (toutes offres), dans l'éditeur SQL :
+```sql
+-- Derniers appels et leur réponse
+select status_code, content, created from net._http_response order by created desc limit 5;
+```
 
-  ```sql
-  create extension if not exists pg_cron;
-  create extension if not exists pg_net;
-  select cron.schedule('social-status', '* * * * *', $$
-    select net.http_get(
-      url := 'https://marketing.tag2share.com/api/cron/social-status',
-      headers := jsonb_build_object('Authorization', 'Bearer <CRON_SECRET>'),
-      timeout_milliseconds := 60000
-    )
-  $$);
-  ```
-
-- tout planificateur externe (cron-job.org...) capable d'envoyer l'en-tête.
+Alternatives, à ne pas cumuler avec pg_cron : Vercel Cron (offre Pro seulement,
+l'offre Hobby est limitée à un passage par jour), ou tout planificateur externe
+capable d'envoyer l'en-tête.
 
 Sans cron, les statuts et les emails n'avancent qu'à l'ouverture de /social.
 
@@ -306,7 +301,8 @@ Sans cron, les statuts et les emails n'avancent qu'à l'ouverture de /social.
 2. Ajouter `SOCIAL_ENCRYPTION_KEY` (`openssl rand -hex 32`) et `CRON_SECRET`.
    ⚠️ Changer `SOCIAL_ENCRYPTION_KEY` rend les clés enregistrées illisibles :
    il faudrait reconnecter chaque marque.
-3. Brancher le cron (ci-dessus).
+3. Créer le secret `social_cron_secret` dans le coffre, puis exécuter
+   [`0019_social_cron.sql`](supabase/migrations/0019_social_cron.sql).
 4. Pour chaque marque : basculer dessus, **/social → Connexion**, coller sa clé
    Buffer, vérifier les canaux et l'adresse de notification.
 
