@@ -2,9 +2,18 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { ok, readJson } from "@/lib/http";
 import { activeBrand, requireBrand } from "@/lib/brand-context";
 import { socialFail } from "@/lib/social/http";
-import { checkPlan } from "@/lib/social/rules";
+import { checkPlan, planFeatures, queueErrors, serviceLabel } from "@/lib/social/rules";
 import { schedulePost, unschedulePost } from "@/lib/social/schedule";
-import { deletePostRow, loadPost, parsePostInput, SocialError, writePost } from "@/lib/social/store";
+import {
+  deletePostRow,
+  listChannels,
+  loadConnection,
+  loadPost,
+  parsePostInput,
+  queuedPerChannel,
+  SocialError,
+  writePost,
+} from "@/lib/social/store";
 
 export const runtime = "nodejs";
 // Un appel Buffer par canal (et par post échu pour le suivi) : au-delà des 10 s par défaut.
@@ -16,20 +25,43 @@ type Params = { params: Promise<{ id: string }> };
  * Un post, avec `check` : les problèmes qui bloqueraient sa programmation
  * (mêmes règles que l'éditeur et que schedulePost). L'éditeur les calcule
  * lui-même ; le serveur MCP, qui ne peut pas importer rules.ts, les lit ici.
+ * L'offre Buffer de la marque compte : premier commentaire et file par canal.
  */
 export async function GET(req: Request, { params }: Params) {
   try {
     const { id } = await params;
     const brand = await activeBrand(req);
-    const post = await loadPost(supabaseAdmin(), brand.slug, id);
+    const db = supabaseAdmin();
+    const [post, connection, channels] = await Promise.all([
+      loadPost(db, brand.slug, id),
+      loadConnection(db, brand.slug),
+      listChannels(db, brand.slug),
+    ]);
+    const features = planFeatures(connection?.plan, connection?.limits);
     const check = checkPlan({
       format: post.format,
       text: post.text,
       firstComment: post.first_comment,
       services: post.targets.map((t) => t.service),
       media: post.media,
+      features,
     });
-    return ok({ post, check });
+    // File : seulement pour ce qui reste à programmer.
+    const pending = post.targets.filter((t) => t.status === "pending" || t.status === "failed" || t.status === "buffer_draft");
+    if (pending.length && features.scheduledPostsPerChannel) {
+      const queued = await queuedPerChannel(db, pending.map((t) => t.channel_id), post.id);
+      const names = new Map(channels.map((c) => [c.id, c.display_name || c.name || c.id]));
+      check.errors.push(
+        ...queueErrors(
+          pending.map((t) => ({
+            label: `${serviceLabel(t.service)} (${names.get(t.channel_id) ?? t.channel_id})`,
+            queued: queued.get(t.channel_id) ?? 0,
+          })),
+          features.scheduledPostsPerChannel
+        )
+      );
+    }
+    return ok({ post, check, plan: connection?.plan ?? null });
   } catch (err) {
     return socialFail(err);
   }

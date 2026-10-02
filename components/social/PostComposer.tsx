@@ -31,9 +31,11 @@ import { formatLong, fromLocalInput, toLocalInput } from "@/lib/social/dates";
 import {
   checkPlan,
   FIRST_COMMENT_SERVICES,
+  type PlanFeatures,
   FORMAT_LABEL,
   MAX_CAROUSEL_IMAGES,
   POST_STATUS_LABEL,
+  queueErrors,
   serviceLabel,
   TARGET_STATUS_LABEL,
   TEXT_LIMITS,
@@ -58,6 +60,10 @@ type Props = {
   channels: SocialChannel[];
   connected: boolean;
   defaultNotifyEmail: string | null;
+  /** Ce que l'offre Buffer de la marque autorise. */
+  features: PlanFeatures;
+  /** Posts déjà programmés par canal, tous posts confondus (celui-ci compris). */
+  queued: Record<string, number>;
   onClose: () => void;
   onSaved: (post: SocialPost) => void;
   onDeleted: (id: string) => void;
@@ -100,6 +106,8 @@ export function PostComposer({
   channels,
   connected,
   defaultNotifyEmail,
+  features,
+  queued,
   onClose,
   onSaved,
   onDeleted,
@@ -147,10 +155,22 @@ export function PostComposer({
   const selectedChannels = selectable.filter((c) => selected.includes(c.id));
   const services = selectedChannels.map((c) => c.service);
 
-  const plan = useMemo(
-    () => checkPlan({ format, text, firstComment, services, media }),
-    [format, text, firstComment, services.join(","), media] // eslint-disable-line react-hooks/exhaustive-deps
-  );
+  // File Buffer d'un canal, CE post exclu : le reprogrammer libère d'abord sa place.
+  const queuedOthers = (channelId: string) =>
+    (queued[channelId] ?? 0) -
+    (initialPost?.targets.some((t) => t.channel_id === channelId && t.status === "scheduled") ? 1 : 0);
+  const queueLimit = features.scheduledPostsPerChannel;
+
+  const plan = useMemo(() => {
+    const check = checkPlan({ format, text, firstComment, services, media, features });
+    check.errors.push(
+      ...queueErrors(
+        selectedChannels.map((c) => ({ label: `${serviceLabel(c.service)} (${accountOf(c).name})`, queued: queuedOthers(c.id) })),
+        queueLimit
+      )
+    );
+    return check;
+  }, [format, text, firstComment, services.join(","), media, features, queued, selected.join(",")]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const visuals = media.filter((m) => m.kind !== "document");
   const doc = media.find((m) => m.kind === "document");
@@ -377,6 +397,14 @@ export function PostComposer({
                           <ServiceBadge service={c.service} className="absolute -bottom-1 -right-1.5 ring-2 ring-white" />
                         </span>
                         <span className="max-w-[160px] truncate">{accountOf(c).name}</span>
+                        {queueLimit && !locked && (
+                          <span
+                            title={`Posts programmés sur ce canal (offre Buffer : ${queueLimit} au maximum)`}
+                            className={cn("text-[11px]", queuedOthers(c.id) >= queueLimit ? "font-semibold text-red-600" : "text-gray-400")}
+                          >
+                            {queuedOthers(c.id)}/{queueLimit}
+                          </span>
+                        )}
                         {status && status !== "pending" && (
                           <Badge color={STATUS_COLOR[status]}>{TARGET_STATUS_LABEL[status]}</Badge>
                         )}
@@ -437,16 +465,21 @@ export function PostComposer({
                 disabled={locked}
                 placeholder="Titre interne (calendrier, titre du PDF LinkedIn) - facultatif"
               />
-              {services.some((s) => FIRST_COMMENT_SERVICES.has(s)) && (
-                <Textarea
-                  value={firstComment}
-                  onChange={(e) => setFirstComment(e.target.value)}
-                  disabled={locked}
-                  rows={2}
-                  placeholder="Premier commentaire (Instagram, Facebook, LinkedIn) - facultatif"
-                  className="font-sans"
-                />
-              )}
+              {services.some((s) => FIRST_COMMENT_SERVICES.has(s)) &&
+                (features.firstComment || firstComment.trim() ? (
+                  <Textarea
+                    value={firstComment}
+                    onChange={(e) => setFirstComment(e.target.value)}
+                    disabled={locked}
+                    rows={2}
+                    placeholder="Premier commentaire (Instagram, Facebook, LinkedIn) - facultatif"
+                    className="font-sans"
+                  />
+                ) : (
+                  <p className="text-xs text-gray-400">
+                    Premier commentaire : réservé aux offres Buffer payantes (offre gratuite détectée pour {brand.name}).
+                  </p>
+                ))}
             </section>
 
             {/* Visuels */}
@@ -681,7 +714,7 @@ export function PostComposer({
                 account={current.account}
                 format={format}
                 text={text}
-                firstComment={firstComment}
+                firstComment={features.firstComment ? firstComment : null}
                 media={media}
                 scheduledAt={scheduledIso}
                 title={title}

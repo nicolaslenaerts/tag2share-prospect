@@ -121,4 +121,7 @@ export type ConnectionView = {
   connectedAt: string | null;
   channelsSyncedAt: string | null;
   channels: SocialChannel[];
+  /** Offre Buffer détectée d'après les limites de l'organisation (null : inconnue). */
+  plan: "free" | "paid" | null;
+  limits: { channels: number; scheduledPosts: number; members: number; postTemplates: number } | null;
 };

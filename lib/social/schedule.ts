@@ -18,8 +18,8 @@ import {
   bufferDeletePost,
   type BufferAsset,
 } from "./buffer";
-import { checkPlan, mediaForTarget, rollupStatus, serviceLabel } from "./rules";
-import { listChannels, loadPost, requireApiKey, SocialError } from "./store";
+import { checkPlan, mediaForTarget, planFeatures, queueErrors, rollupStatus, serviceLabel } from "./rules";
+import { listChannels, loadConnection, loadPost, queuedPerChannel, requireApiKey, SocialError } from "./store";
 import type { ScheduleMode, SocialMedia, SocialPost, SocialTarget } from "./types";
 
 type Db = SupabaseClient;
@@ -102,14 +102,36 @@ export async function schedulePost(
       throw new SocialError(`Le canal ${serviceLabel(t.service)} « ${c?.display_name || c?.name || t.channel_id} » n'est plus disponible.`);
   }
 
+  // Offre Buffer de la marque : premier commentaire et taille de file.
+  const connection = await loadConnection(db, brand);
+  const features = planFeatures(connection?.plan, connection?.limits);
+
   const plan = checkPlan({
     format: post.format,
     text: post.text,
     firstComment: post.first_comment,
     services: targets.map((t) => t.service),
     media: post.media,
+    features,
   });
   if (plan.errors.length) throw new SocialError(plan.errors.join("\n"), 422);
+
+  // File pleine sur un canal : refusée AVANT le premier envoi, sinon le post
+  // partirait sur les autres canaux et pas sur celui-là.
+  if (mode === "schedule" && features.scheduledPostsPerChannel) {
+    const queued = await queuedPerChannel(db, targets.map((t) => t.channel_id), postId);
+    const full = queueErrors(
+      targets.map((t) => {
+        const c = channels.get(t.channel_id);
+        return {
+          label: `${serviceLabel(t.service)} (${c?.display_name || c?.name || t.channel_id})`,
+          queued: queued.get(t.channel_id) ?? 0,
+        };
+      }),
+      features.scheduledPostsPerChannel
+    );
+    if (full.length) throw new SocialError(full.join("\n"), 422);
+  }
 
   const perTarget = targets.map((t) => ({
     target: t,
@@ -140,7 +162,8 @@ export async function schedulePost(
         text: post.text,
         assets: media.map((m) => toAsset(post, m)),
         format: post.format,
-        firstComment: post.first_comment,
+        // Offre gratuite : Buffer n'accepte pas le premier commentaire.
+        firstComment: features.firstComment ? post.first_comment : null,
         mode,
         dueAt,
       });

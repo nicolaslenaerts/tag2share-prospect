@@ -75,8 +75,9 @@ const CHANNELS_ARG = {
 const getSocialSetup = {
   name: "get_social_setup",
   description:
-    "État de Buffer pour une marque : clé connectée ou non, canaux disponibles (id, réseau, nom) " +
-    "et destinataire des notifications. À appeler avant de créer un post, pour connaître les " +
+    "État de Buffer pour une marque : clé connectée ou non, offre (free / paid) et ses limites, " +
+    "canaux disponibles (id, réseau, nom) et destinataire des notifications. À appeler avant de " +
+    "créer un post, pour connaître les channel_ids et savoir si le premier commentaire est permis. " +
     "channel_ids. refresh_channels relit les canaux chez Buffer (quota de 250 appels par jour : " +
     "seulement si un canal manque).",
   inputSchema: {
@@ -112,6 +113,10 @@ const getSocialSetup = {
       account_email: view.accountEmail ?? null,
       notify_email: view.notifyEmail || view.defaultNotifyEmail || null,
       channels_synced_at: view.channelsSyncedAt ?? null,
+      // Offre gratuite : pas de premier commentaire, file limitée par canal.
+      plan: view.plan ?? null,
+      first_comment_available: view.plan !== "free",
+      scheduled_posts_per_channel: view.limits?.scheduledPosts ?? null,
       channels,
       next_step,
     };
@@ -183,7 +188,12 @@ const createSocialPost = {
       scheduled_at: WHEN_ARG,
       channel_ids: CHANNELS_ARG,
       media: MEDIA_ARG,
-      first_comment: { type: "string", description: "Premier commentaire (Instagram, Facebook, LinkedIn)." },
+      first_comment: {
+        type: "string",
+        description:
+          "Premier commentaire (Instagram, Facebook, LinkedIn). Offres Buffer payantes seulement : " +
+          "en offre gratuite (get_social_setup.first_comment_available = false), il n'est pas envoyé.",
+      },
       notify: { type: "boolean", description: "Email à la publication (défaut : oui)." },
       notify_email: { type: "string", description: "Destinataire de cet email, sinon celui de la marque." },
     },

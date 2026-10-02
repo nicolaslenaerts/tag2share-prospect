@@ -10,7 +10,7 @@
 import { randomUUID } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isValidEmail } from "@/lib/brand-sender";
-import { bufferChannels, type BufferChannel } from "./buffer";
+import { bufferChannels, bufferPlan, type BufferChannel, type BufferLimits, type BufferPlan } from "./buffer";
 import { decryptSecret, encryptSecret } from "./crypto";
 import { mediaKind } from "./rules";
 import type {
@@ -93,6 +93,9 @@ export type ConnectionRow = {
   notify_email: string | null;
   channels_synced_at: string | null;
   connected_at: string;
+  plan: BufferPlan | null;
+  limits: BufferLimits | null;
+  plan_checked_at: string | null;
 };
 
 export async function loadConnection(db: Db, brand: string): Promise<ConnectionRow | null> {
@@ -134,6 +137,40 @@ export async function saveNotifyEmail(db: Db, brand: string, email: string | nul
       .update({ notify_email: value, updated_at: new Date().toISOString() })
       .eq("brand", brand)
   );
+}
+
+/** Relit l'offre Buffer de la marque (limites de l'organisation) et l'enregistre. */
+export async function refreshPlan(db: Db, brand: string, apiKey: string): Promise<{ plan: BufferPlan; limits: BufferLimits }> {
+  const result = await bufferPlan(apiKey);
+  check(
+    await db
+      .from("brand_buffer")
+      .update({ plan: result.plan, limits: result.limits, plan_checked_at: new Date().toISOString() })
+      .eq("brand", brand)
+  );
+  return result;
+}
+
+/** Une offre se change rarement : relue au plus une fois par jour. */
+const PLAN_MAX_AGE_MS = 24 * 3600_000;
+
+/**
+ * Offre de la marque, relue chez Buffer si elle n'a jamais été détectée ou
+ * date de plus d'un jour. En cas d'échec réseau, la dernière valeur connue
+ * (ou null) : la détection ne doit jamais bloquer l'affichage.
+ */
+export async function currentPlan(
+  db: Db,
+  row: ConnectionRow
+): Promise<{ plan: BufferPlan | null; limits: BufferLimits | null }> {
+  const fresh = row.plan_checked_at && Date.now() - Date.parse(row.plan_checked_at) < PLAN_MAX_AGE_MS;
+  if (row.plan && fresh) return { plan: row.plan, limits: row.limits };
+  try {
+    const key = decryptSecret({ encrypted: row.api_key_encrypted, iv: row.api_key_iv, version: row.api_key_version });
+    return await refreshPlan(db, row.brand, key);
+  } catch {
+    return { plan: row.plan, limits: row.limits };
+  }
 }
 
 /** Déconnecte la marque. Les posts déjà programmés restent dans Buffer. */
@@ -187,7 +224,33 @@ export async function syncChannels(db: Db, brand: string, apiKey: string): Promi
   if (known.length) gone = gone.not("id", "in", `(${known.map((id) => `"${id}"`).join(",")})`);
   check(await gone);
   check(await db.from("brand_buffer").update({ channels_synced_at: now }).eq("brand", brand));
+  // Même occasion pour relire l'offre (connexion, « Actualiser », import).
+  await refreshPlan(db, brand, apiKey).catch(() => {});
   return listChannels(db, brand);
+}
+
+/**
+ * Posts encore programmés (date future) par canal, `excludePostId` exclu.
+ * Toutes marques confondues : la limite de file appartient au canal Buffer,
+ * même si une clé partagée l'expose à deux marques. Seul le compte sort d'ici.
+ */
+export async function queuedPerChannel(
+  db: Db,
+  channelIds: string[],
+  excludePostId?: string
+): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  if (channelIds.length === 0) return out;
+  let q = db
+    .from("social_post_targets")
+    .select("channel_id, post:social_posts!inner(scheduled_at)")
+    .in("channel_id", channelIds)
+    .eq("status", "scheduled")
+    .gt("post.scheduled_at", new Date().toISOString());
+  if (excludePostId) q = q.neq("post_id", excludePostId);
+  const rows = (check(await q) ?? []) as unknown as { channel_id: string }[];
+  for (const r of rows) out.set(r.channel_id, (out.get(r.channel_id) ?? 0) + 1);
+  return out;
 }
 
 export async function setChannelEnabled(db: Db, brand: string, id: string, enabled: boolean) {

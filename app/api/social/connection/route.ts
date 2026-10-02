@@ -6,6 +6,7 @@ import { bufferAccount, BufferApiError } from "@/lib/social/buffer";
 import { encryptionReady } from "@/lib/social/crypto";
 import { socialFail } from "@/lib/social/http";
 import {
+  currentPlan,
   deleteConnection,
   isMissingTable,
   listChannels,
@@ -35,12 +36,16 @@ async function view(brand: BrandConfig): Promise<ConnectionView> {
     connectedAt: null,
     channelsSyncedAt: null,
     channels: [],
+    plan: null,
+    limits: null,
   };
   const probe = await db.from("brand_buffer").select("brand").limit(1);
   if (isMissingTable(probe.error)) return { ...base, ready: false };
 
   const row = await loadConnection(db, brand.slug);
   if (!row) return base;
+  // Offre relue chez Buffer au plus une fois par jour (une requête).
+  const { plan, limits } = await currentPlan(db, row);
   return {
     ...base,
     connected: true,
@@ -50,6 +55,8 @@ async function view(brand: BrandConfig): Promise<ConnectionView> {
     connectedAt: row.connected_at,
     channelsSyncedAt: row.channels_synced_at,
     channels: await listChannels(db, brand.slug),
+    plan,
+    limits,
   };
 }
 

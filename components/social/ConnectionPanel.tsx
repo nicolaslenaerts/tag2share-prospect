@@ -116,6 +116,24 @@ export function ConnectionPanel({
               {connection.keyHint && <span className="text-gray-400">clé ••••{connection.keyHint}</span>}
             </div>
             {connection.connectedAt && <p className="text-xs text-gray-400">Depuis le {formatShort(connection.connectedAt)}</p>}
+            {connection.plan && (
+              <div className="rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-600">
+                <div className="mb-1 flex items-center gap-2">
+                  <span className="font-semibold text-gray-900">Offre Buffer</span>
+                  <Badge color={connection.plan === "free" ? "amber" : "green"}>
+                    {connection.plan === "free" ? "Gratuite" : "Payante"}
+                  </Badge>
+                </div>
+                {connection.limits && (
+                  <p>
+                    {connection.limits.scheduledPosts} posts programmés au maximum par canal · {connection.limits.channels} canaux
+                  </p>
+                )}
+                {connection.plan === "free" && (
+                  <p>Pas de premier commentaire : le champ est masqué dans l&apos;éditeur et rien n&apos;est envoyé.</p>
+                )}
+              </div>
+            )}
             <div className="flex flex-wrap gap-2">
               <Button variant="outline" onClick={() => setReplacing(true)} disabled={!!busy}>
                 Remplacer la clé

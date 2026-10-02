@@ -37,12 +37,19 @@ export async function loadBrands({ refresh = false } = {}) {
  * @returns {Promise<string>} slug validé contre le registre
  */
 export async function resolveBrandSlug(requested) {
-  const brands = await loadBrands();
-  const known = brands.map((b) => b.slug);
+  let brands = await loadBrands();
 
   if (requested) {
     const slug = String(requested).trim().toLowerCase();
-    const match = brands.find((b) => b.slug === slug);
+    let match = brands.find((b) => b.slug === slug);
+    // Slug absent du cache : la marque a peut-être été créée depuis le
+    // démarrage du serveur (une session reste ouverte des heures). On relit le
+    // registre une fois avant de refuser.
+    if (!match) {
+      brands = await loadBrands({ refresh: true });
+      match = brands.find((b) => b.slug === slug);
+    }
+    const known = brands.map((b) => b.slug);
     if (!match)
       throw new Error(
         `Marque inconnue : « ${requested} ». Marques disponibles : ${known.join(", ")}.`
@@ -67,7 +74,7 @@ export async function resolveBrandSlug(requested) {
   // ce risque ?
   // ------------------------------------------------------------------
   throw new Error(
-    `Paramètre « brand » requis. Marques disponibles : ${known.join(", ")}.`
+    `Paramètre « brand » requis. Marques disponibles : ${brands.map((b) => b.slug).join(", ")}.`
   );
 }
 

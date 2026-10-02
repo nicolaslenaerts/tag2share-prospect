@@ -217,6 +217,26 @@ dans `social_channels` : l'API Buffer est plafonnée à **100 requêtes / 15 min
 et 250 / jour** par clé en offre gratuite, le calendrier ne l'interroge donc
 jamais. Un canal se décoche s'il appartient à une autre marque (clé partagée).
 
+### Offre Buffer : gratuite ou payante
+
+L'API Buffer ne donne pas le nom de l'offre, seulement les limites de
+l'organisation (`Organization.limits`). L'offre gratuite se reconnaît à son
+plafond de **10 posts programmés par canal** ; elle n'a pas non plus le
+**premier commentaire**. L'offre est détectée à la connexion, à chaque
+« Actualiser » ou import, et au plus une fois par jour à l'affichage
+(colonnes `plan`, `limits` de `brand_buffer`, migration
+[`0021`](supabase/migrations/0021_buffer_plan.sql)). Elle est affichée dans
+/social → Connexion.
+
+En offre gratuite :
+
+- le champ premier commentaire est masqué dans l'éditeur, et le serveur ne
+  l'envoie jamais (un commentaire déjà saisi est conservé, signalé, ignoré) ;
+- chaque canal affiche sa file (`7/10`), et un post est refusé **avant tout
+  envoi** si un de ses canaux est plein. Sinon il partirait sur les autres
+  canaux et pas sur celui-là. Le compte se fait sur les posts connus de
+  l'outil : importer d'abord ce qui a été programmé directement dans Buffer.
+
 ### Formats
 
 | Format | Instagram / Facebook | LinkedIn | Autres réseaux |

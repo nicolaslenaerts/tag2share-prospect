@@ -519,3 +519,36 @@ export async function bufferQueue(
   }
   return out;
 }
+
+// ─── Offre souscrite ─────────────────────────────────────────────────────────
+
+export type BufferPlan = "free" | "paid";
+
+export type BufferLimits = {
+  channels: number;
+  scheduledPosts: number;
+  members: number;
+  postTemplates: number;
+};
+
+/**
+ * Plafond de posts programmés de l'offre gratuite. L'API ne donne pas le nom
+ * de l'offre : on la reconnaît à ses limites (relevées le 02/10/2026 sur trois
+ * comptes gratuits : channels 3, scheduledPosts 10, members 0, postTemplates 1).
+ */
+export const FREE_SCHEDULED_POSTS = 10;
+
+/**
+ * Offre de la clé et limites de son organisation. Plusieurs organisations :
+ * la plus restrictive l'emporte (un premier commentaire refusé sur l'une
+ * suffirait à faire échouer un post).
+ */
+export async function bufferPlan(apiKey: string): Promise<{ plan: BufferPlan; limits: BufferLimits }> {
+  const data = await graphql<{
+    account: { organizations: Array<{ limits: BufferLimits }> | null } | null;
+  }>(apiKey, "query T2SPlan { account { organizations { limits { channels scheduledPosts members postTemplates } } } }");
+  const all = (data.account?.organizations ?? []).map((o) => o.limits);
+  if (all.length === 0) throw new BufferApiError("La clé Buffer ne donne accès à aucune organisation.");
+  const limits = all.reduce((min, l) => (l.scheduledPosts < min.scheduledPosts ? l : min));
+  return { plan: limits.scheduledPosts <= FREE_SCHEDULED_POSTS ? "free" : "paid", limits };
+}

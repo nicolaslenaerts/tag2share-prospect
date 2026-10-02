@@ -19,6 +19,7 @@ import { Button, Spinner, cn } from "@/components/ui";
 import { useBrand } from "@/components/BrandProvider";
 import type { ComposerMedia } from "@/lib/social/client-media";
 import { defaultSlot, startOfMonth } from "@/lib/social/dates";
+import { planFeatures } from "@/lib/social/rules";
 import type { ImportSummary } from "@/lib/social/import";
 import type { ConnectionView, SocialPost } from "@/lib/social/types";
 import { CalendarView } from "./CalendarView";
@@ -160,6 +161,16 @@ export function SocialPlanner() {
   }, []);
 
   const usable = (connection?.channels ?? []).filter((c) => c.enabled && !c.disconnected);
+  const features = planFeatures(connection?.plan, connection?.limits);
+
+  // File Buffer par canal : posts encore programmés, date future. Même compte
+  // que le contrôle serveur avant programmation (queuedPerChannel).
+  const queued: Record<string, number> = {};
+  const now = Date.now();
+  for (const p of posts) {
+    if (!p.scheduled_at || Date.parse(p.scheduled_at) <= now) continue;
+    for (const t of p.targets) if (t.status === "scheduled") queued[t.channel_id] = (queued[t.channel_id] ?? 0) + 1;
+  }
 
   const openNew = (day?: Date) =>
     setEditor({
@@ -302,6 +313,8 @@ export function SocialPlanner() {
           channels={connection.channels}
           connected={connection.connected}
           defaultNotifyEmail={connection.notifyEmail || connection.defaultNotifyEmail}
+          features={features}
+          queued={queued}
           onClose={closeEditor}
           onSaved={upsert}
           onDeleted={(id) => setPosts((prev) => prev.filter((p) => p.id !== id))}
