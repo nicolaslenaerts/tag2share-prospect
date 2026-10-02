@@ -2,6 +2,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { ok, readJson } from "@/lib/http";
 import { activeBrand, requireBrand } from "@/lib/brand-context";
 import { socialFail } from "@/lib/social/http";
+import { checkPlan } from "@/lib/social/rules";
 import { schedulePost, unschedulePost } from "@/lib/social/schedule";
 import { deletePostRow, loadPost, parsePostInput, SocialError, writePost } from "@/lib/social/store";
 
@@ -11,11 +12,24 @@ export const maxDuration = 60;
 
 type Params = { params: Promise<{ id: string }> };
 
+/**
+ * Un post, avec `check` : les problèmes qui bloqueraient sa programmation
+ * (mêmes règles que l'éditeur et que schedulePost). L'éditeur les calcule
+ * lui-même ; le serveur MCP, qui ne peut pas importer rules.ts, les lit ici.
+ */
 export async function GET(req: Request, { params }: Params) {
   try {
     const { id } = await params;
     const brand = await activeBrand(req);
-    return ok({ post: await loadPost(supabaseAdmin(), brand.slug, id) });
+    const post = await loadPost(supabaseAdmin(), brand.slug, id);
+    const check = checkPlan({
+      format: post.format,
+      text: post.text,
+      firstComment: post.first_comment,
+      services: post.targets.map((t) => t.service),
+      media: post.media,
+    });
+    return ok({ post, check });
   } catch (err) {
     return socialFail(err);
   }

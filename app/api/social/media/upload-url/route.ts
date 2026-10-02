@@ -67,7 +67,10 @@ export async function POST(req: Request) {
         );
       throw new SocialError(`Upload impossible : ${error?.message ?? "réponse vide"}`, 500);
     }
-    return ok({ path, token: data.token, publicUrl: publicMediaUrl(db, path) });
+    // `uploadUrl` (URL signée complète) sert au serveur MCP, qui envoie le
+    // fichier sans supabase-js : il n'a ainsi pas à connaître le projet
+    // Supabase de l'instance visée.
+    return ok({ path, token: data.token, uploadUrl: data.signedUrl, publicUrl: publicMediaUrl(db, path) });
   } catch (err) {
     return socialFail(err);
   }

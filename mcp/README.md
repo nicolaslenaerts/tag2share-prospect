@@ -2,7 +2,8 @@
 
 Expose l'outil de prospection à Claude Code : lire les marques, les segments et
 les campagnes, créer une campagne sur un segment, lui ajouter des variantes
-d'email.
+d'email ; préparer et programmer les posts réseaux sociaux (publication, réel,
+carrousel) publiés via Buffer.
 
 ## Ce que c'est (et ce que ce n'est pas)
 
@@ -50,6 +51,30 @@ Pour viser la production depuis Claude Code, renseignez le bloc `env` de
 | `add_campaign_variant` | Ajoute un template à une campagne. |
 | `set_campaign_variants` | Met à jour textes et **poids** en bloc. |
 
+### Réseaux sociaux (Buffer)
+
+| Outil | Effet |
+| --- | --- |
+| `get_social_setup` | Clé Buffer connectée ou non, canaux utilisables (leurs `channel_ids`). |
+| `list_social_posts` | Calendrier de la marque, sur une plage ou en entier. |
+| `get_social_post` | Détail d'un post, médias et `check` (ce qui bloque sa programmation). |
+| `create_social_post` | Nouveau post (publication, réel, carrousel) en **brouillon**, médias envoyés au passage. |
+| `update_social_post` | Modifie les champs fournis ; `reschedule: true` si le post est déjà programmé. |
+| `schedule_social_post` | `buffer_draft` (test, rien ne part) ou `schedule` (à sa date), `confirm: true` exigé. |
+| `unschedule_social_post` | Retire le post de Buffer et le ramène en brouillon. |
+
+Médias : chaque élément est un fichier local (`file`), une URL (`url`,
+téléchargée) ou un média déjà stocké (`storage_path`). Le serveur lit les
+dimensions, rend la vignette d'un PDF (exigée par LinkedIn) et d'une vidéo, puis
+envoie le fichier directement à Supabase par l'URL signée de l'API, comme
+l'éditeur. Vignettes : `pdftoppm` et `ffmpeg` s'ils sont installés
+(`brew install poppler ffmpeg`), sinon `sips` / `qlmanage` de macOS. Pour un
+carrousel LinkedIn, l'agent fournit le PDF : le serveur ne l'assemble pas depuis
+les images.
+
+Dates : ISO 8601 **avec fuseau** (`2026-10-05T09:30:00+02:00`). Une date sans
+fuseau est refusée, le serveur la lirait en UTC.
+
 Toute opération est **cloisonnée par marque** : le paramètre `brand` est validé
 contre le registre avant écriture. L'API, elle, retombe silencieusement sur la
 marque par défaut quand le slug est inconnu (comportement voulu pour un
@@ -60,6 +85,13 @@ navigateur, dangereux pour un agent) : voir `mcp/brand.mjs`.
 Aucun outil n'**envoie d'email**, ne synchronise les destinataires ni ne
 supprime quoi que ce soit. Une campagne créée ici naît en brouillon et reste
 inerte tant qu'un humain ne la lance pas depuis l'interface.
+
+Côté réseaux sociaux, l'agent peut **programmer** un post à sa date (après
+accord explicite de l'utilisateur, `confirm: true`), mais **jamais le publier
+immédiatement** : le mode `now` de l'API n'est pas exposé. Un post programmé se
+retire jusqu'à sa date ; un post parti à l'instant ne se rattrape pas. Le
+serveur ne supprime pas de post et ne touche pas à la clé Buffer, qui se
+connecte dans `/social`.
 
 ## Vérification
 

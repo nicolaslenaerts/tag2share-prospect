@@ -102,6 +102,31 @@ try {
           `total ${d.campaign.variants_total_weight} %`
       );
     }
+
+    const setup = payload(
+      await call("tools/call", { name: "get_social_setup", arguments: { brand: b.slug } }),
+      "get_social_setup"
+    );
+    const { posts } = payload(
+      await call("tools/call", { name: "list_social_posts", arguments: { brand: b.slug } }),
+      "list_social_posts"
+    );
+    ok(
+      `  social : Buffer ${setup.connected ? "connecté" : "non connecté"}, ` +
+        `${setup.channels.filter((c) => c.usable).length} canal(aux) utilisable(s), ${posts.length} post(s)`
+    );
+    if (posts.length) {
+      const p = payload(
+        await call("tools/call", {
+          name: "get_social_post",
+          arguments: { brand: b.slug, post_id: posts[0].id },
+        }),
+        "get_social_post"
+      );
+      if (!Array.isArray(p.check?.errors))
+        throw new Error("get_social_post sans diagnostic : l'instance n'est pas à jour");
+      ok(`  get_social_post « ${p.post.title ?? p.post.id} » : ${p.check.errors.length} erreur(s)`);
+    }
   }
 
   // Le garde-fou de marque doit refuser, pas dériver silencieusement.

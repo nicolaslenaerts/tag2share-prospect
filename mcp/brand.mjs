@@ -12,6 +12,13 @@
  */
 import { request } from "./client.mjs";
 
+/** Paramètre `brand` commun à tous les outils (campagnes et réseaux sociaux). */
+export const BRAND_ARG = {
+  type: "string",
+  description:
+    "Slug de la marque (ex. tag2share, horodo, voxado). Utiliser list_brands pour les connaître.",
+};
+
 let cached = null;
 
 /** Registre des marques (mis en cache pour la durée du processus). */

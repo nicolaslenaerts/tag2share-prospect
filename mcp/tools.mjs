@@ -11,13 +11,8 @@
  *     l'agent va chercher le détail dans l'interface s'il en a besoin.
  */
 import { request } from "./client.mjs";
-import { loadBrands, resolveBrandSlug, summarizeBrands } from "./brand.mjs";
-
-const BRAND_ARG = {
-  type: "string",
-  description:
-    "Slug de la marque (ex. tag2share, horodo, voxado). Utiliser list_brands pour les connaître.",
-};
+import { BRAND_ARG, loadBrands, resolveBrandSlug, summarizeBrands } from "./brand.mjs";
+import { SOCIAL_TOOLS } from "./social.mjs";
 
 /* ------------------------------------------------------------------ */
 /* Lectures                                                            */
@@ -258,6 +253,7 @@ export const TOOLS = [
   createCampaign,
   addCampaignVariant,
   setCampaignVariants,
+  ...SOCIAL_TOOLS,
 ];
 
 /* ------------------------------------------------------------------ */
