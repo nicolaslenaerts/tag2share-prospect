@@ -9,25 +9,19 @@ export const runtime = "nodejs";
 export async function GET(req: Request) {
   const brand = await activeBrand(req);
   const db = supabaseAdmin();
+  // Le comptage se fait côté base (agrégat embarqué) : lire la table de
+  // liaison puis compter en JS plafonne à 1000 lignes (max-rows PostgREST),
+  // et les segments au-delà tombaient silencieusement à 0.
   const { data, error } = await db
     .from("segments")
-    .select("*")
+    .select("*, segment_prospects(count)")
     .eq("brand", brand.slug)
     .order("created_at", { ascending: false });
   if (error) return fail(error.message, 500);
 
-  // Comptage des rattachements (table de liaison) regroupé par segment,
-  // restreint aux segments de cette marque.
-  const segmentIds = new Set((data ?? []).map((s) => s.id));
-  const { data: links } = await db.from("segment_prospects").select("segment_id");
-  const counts = new Map<string, number>();
-  for (const l of links ?? []) {
-    if (!segmentIds.has(l.segment_id)) continue;
-    counts.set(l.segment_id, (counts.get(l.segment_id) ?? 0) + 1);
-  }
-  const segments = (data ?? []).map((s) => ({
+  const segments = (data ?? []).map(({ segment_prospects, ...s }) => ({
     ...s,
-    prospect_count: counts.get(s.id) ?? 0,
+    prospect_count: segment_prospects?.[0]?.count ?? 0,
   }));
 
   return ok({ segments });
