@@ -250,6 +250,33 @@ serverless Vercel refuse les requêtes de plus de 4,5 Mo.
 
 ⚠️ Offre gratuite Supabase : **50 Mo maximum par fichier** (vidéos comprises).
 
+### Récupérer ce qui est déjà programmé dans Buffer
+
+Bouton **Importer depuis Buffer** (barre d'outils de /social), lancé aussi
+automatiquement à la première connexion d'une clé. Lecture seule chez Buffer :
+rien n'y est modifié. Code : [`lib/social/import.ts`](lib/social/import.ts).
+
+- Posts **programmés** dans les 6 prochains mois, sur les canaux cochés pour la
+  marque (les autres sont comptés, pas importés). Les canaux sont actualisés au
+  passage.
+- Buffer stocke un post **par canal** : les exemplaires de même texte, à une
+  minute près et aux visuels identiques, redeviennent **un seul post** ici
+  (images Instagram / Facebook et PDF LinkedIn réunis, format déduit : réel,
+  carrousel ou publication).
+- Les médias sont **recopiés** dans le bucket `social-media` : aperçu, et
+  reprogrammation possible si on modifie le post ici.
+- Un post déjà présent n'est jamais dupliqué ; sa **date et son texte suivent
+  Buffer** (déplacé dans Buffer = déplacé ici). Un « Brouillon Buffer » créé ici
+  puis programmé dans Buffer repasse en « Programmé ».
+- Les posts créés il y a moins de 5 minutes sont laissés au passage suivant
+  (ce peut être une programmation de l'outil en cours d'enregistrement).
+- Les posts importés envoient eux aussi l'email de notification à la
+  publication.
+
+Coût : environ 4 requêtes Buffer par import pour une organisation de moins de
+50 posts programmés (le quota gratuit est de 250 par jour). C'est pour cette
+raison qu'il n'y a pas d'import automatique périodique.
+
 ### Modifier un post programmé
 
 Un post déjà dans Buffer est **retiré puis reprogrammé** avec les nouvelles

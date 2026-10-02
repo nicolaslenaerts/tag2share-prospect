@@ -6,15 +6,20 @@
  * À l'ouverture, demande au serveur de rafraîchir les statuts des posts échus
  * (POST /api/social/sync) : sans cron, c'est ce passage qui fait avancer les
  * statuts et partir les emails de notification.
+ *
+ * « Importer depuis Buffer » récupère les posts programmés directement dans
+ * Buffer (lecture seule chez Buffer). Lancé aussi automatiquement à la
+ * première connexion d'une clé.
  */
 import { useCallback, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { CalendarDays, List, Plug, Plus, RefreshCw, TriangleAlert } from "lucide-react";
+import { CalendarDays, CircleCheck, Download, List, Plug, Plus, RefreshCw, TriangleAlert } from "lucide-react";
 import { api } from "@/lib/api";
 import { Button, Spinner, cn } from "@/components/ui";
 import { useBrand } from "@/components/BrandProvider";
 import type { ComposerMedia } from "@/lib/social/client-media";
 import { defaultSlot, startOfMonth } from "@/lib/social/dates";
+import type { ImportSummary } from "@/lib/social/import";
 import type { ConnectionView, SocialPost } from "@/lib/social/types";
 import { CalendarView } from "./CalendarView";
 import { ConnectionPanel } from "./ConnectionPanel";
@@ -31,6 +36,29 @@ const TABS: { value: Tab; label: string; icon: typeof List }[] = [
 
 type Editor = { post: SocialPost | null; draft?: ComposerDraft; key: number };
 
+/** Appels successifs au plus : chaque appel importe ce que son budget de temps permet. */
+const MAX_IMPORT_CALLS = 10;
+
+const plural = (n: number, one: string, many: string) => `${n} ${n > 1 ? many : one}`;
+
+function importMessage(s: ImportSummary, brandName: string): string {
+  if (s.found === 0 && s.otherChannels === 0) return "Import Buffer : aucun post programmé dans les 6 prochains mois.";
+  const parts: string[] = [];
+  if (s.imported)
+    parts.push(
+      plural(s.imported, "post importé", "posts importés") +
+        (s.importedChannels > s.imported ? ` (${s.importedChannels} publications Buffer regroupées)` : "")
+    );
+  if (s.updated) parts.push(plural(s.updated, "post mis à jour", "posts mis à jour"));
+  if (s.known) parts.push(plural(s.known, "déjà présent", "déjà présents"));
+  let msg = `Import Buffer : ${parts.join(", ") || "rien de nouveau"}.`;
+  if (s.otherChannels)
+    msg += ` ${plural(s.otherChannels, "post ignoré", "posts ignorés")} : canaux non utilisés par ${brandName}.`;
+  if (s.recent) msg += ` ${plural(s.recent, "post créé", "posts créés")} il y a moins de 5 minutes : repris au prochain import.`;
+  if (s.deferred) msg += ` Il en reste ${s.deferred} : relancez l'import.`;
+  return msg;
+}
+
 export function SocialPlanner() {
   const brand = useBrand();
   const router = useRouter();
@@ -42,6 +70,8 @@ export function SocialPlanner() {
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [importing, setImporting] = useState(false);
   const [editor, setEditor] = useState<Editor | null>(null);
 
   const loadPosts = useCallback(async () => {
@@ -62,6 +92,50 @@ export function SocialPlanner() {
       setSyncing(false);
     }
   }, [loadPosts]);
+
+  const runImport = useCallback(async () => {
+    setImporting(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const calls: ImportSummary[] = [];
+      for (let i = 0; i < MAX_IMPORT_CALLS; i++) {
+        const s = await api<ImportSummary>("/api/social/import", { method: "POST" });
+        calls.push(s);
+        if (s.deferred === 0 || s.imported === 0) break;
+      }
+      // Les appels suivants relisent la même file : ce qui était déjà là avant
+      // l'import se compte au premier appel, les créations s'additionnent.
+      const total: ImportSummary | null = calls.length
+        ? {
+            ...calls[0],
+            imported: calls.reduce((n, c) => n + c.imported, 0),
+            importedChannels: calls.reduce((n, c) => n + c.importedChannels, 0),
+            deferred: calls[calls.length - 1].deferred,
+            mediaErrors: calls.flatMap((c) => c.mediaErrors),
+          }
+        : null;
+      await loadPosts();
+      // L'import a aussi actualisé les canaux.
+      setConnection(await api<ConnectionView>("/api/social/connection"));
+      if (total) {
+        setNotice(importMessage(total, brand.name));
+        if (total.mediaErrors.length)
+          setError(`Médias non recopiés (les posts restent intacts dans Buffer) :\n${total.mediaErrors.join("\n")}`);
+      }
+    } catch (e) {
+      setError(`Import Buffer : ${(e as Error).message}`);
+    } finally {
+      setImporting(false);
+    }
+  }, [brand.name, loadPosts]);
+
+  /** Première connexion d'une clé : on récupère d'office ce qui est déjà programmé. */
+  const onConnectionChange = (view: ConnectionView) => {
+    const firstConnection = !connection?.connected && view.connected;
+    setConnection(view);
+    if (firstConnection) runImport();
+  };
 
   useEffect(() => {
     (async () => {
@@ -147,9 +221,20 @@ export function SocialPlanner() {
         {connection?.ready && (
           <div className="ml-auto flex items-center gap-2">
             {connection.connected && (
-              <Button variant="ghost" onClick={sync} disabled={syncing} title="Interroger Buffer pour les posts échus">
-                {syncing ? <Spinner /> : <RefreshCw className="h-4 w-4" />} Statuts
-              </Button>
+              <>
+                <Button variant="ghost" onClick={sync} disabled={syncing} title="Interroger Buffer pour les posts échus">
+                  {syncing ? <Spinner /> : <RefreshCw className="h-4 w-4" />} Statuts
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={runImport}
+                  disabled={importing}
+                  title="Récupérer les posts programmés directement dans Buffer (rien n'est modifié chez Buffer)"
+                >
+                  {importing ? <Spinner /> : <Download className="h-4 w-4" />}
+                  {importing ? "Import en cours…" : "Importer depuis Buffer"}
+                </Button>
+              </>
             )}
             <Button onClick={() => openNew()}>
               <Plus className="h-4 w-4" /> Nouveau post
@@ -168,6 +253,16 @@ export function SocialPlanner() {
         </p>
       )}
 
+      {notice && (
+        <p className="flex items-start gap-2 rounded-lg bg-green-50 px-3 py-2 text-sm text-green-800">
+          <CircleCheck className="mt-0.5 h-4 w-4 shrink-0" />
+          <span className="flex-1">{notice}</span>
+          <button type="button" onClick={() => setNotice(null)} className="text-green-700 hover:underline">
+            Fermer
+          </button>
+        </p>
+      )}
+
       {connection?.ready && !connection.connected && tab !== "connection" && (
         <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">
           Aucun compte Buffer connecté pour {brand.name}.{" "}
@@ -177,7 +272,7 @@ export function SocialPlanner() {
         </p>
       )}
 
-      {connection && tab === "connection" && <ConnectionPanel connection={connection} onChange={setConnection} />}
+      {connection && tab === "connection" && <ConnectionPanel connection={connection} onChange={onConnectionChange} />}
 
       {connection && !connection.ready && tab !== "connection" && (
         <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">

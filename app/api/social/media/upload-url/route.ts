@@ -1,27 +1,15 @@
-import { randomUUID } from "node:crypto";
 import { supabaseAdmin } from "@/lib/supabase";
 import { ok, readJson } from "@/lib/http";
 import { requireBrand } from "@/lib/brand-context";
 import { socialFail } from "@/lib/social/http";
 import { MEDIA_RULES, mediaKind } from "@/lib/social/rules";
-import { isMissingTable, publicMediaUrl, SOCIAL_BUCKET, SocialError } from "@/lib/social/store";
+import { isMissingTable, newMediaPath, publicMediaUrl, SOCIAL_BUCKET, SocialError } from "@/lib/social/store";
 
 export const runtime = "nodejs";
 
 /** Vignettes générées par le navigateur (page 1 d'un PDF, image d'une vidéo). */
 const THUMBNAIL_MIME = new Set(["image/png", "image/jpeg"]);
 const THUMBNAIL_MAX_BYTES = 5 * 1024 * 1024;
-
-function safeName(filename: string): string {
-  const cleaned = filename
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .replace(/[^a-zA-Z0-9._-]+/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(-80);
-  return cleaned || "fichier";
-}
 
 /**
  * Émet une URL d'upload signée : le navigateur envoie le fichier directement
@@ -55,8 +43,7 @@ export async function POST(req: Request) {
         throw new SocialError(`« ${filename} » dépasse la taille maximale : ${MEDIA_RULES[kind].label}.`);
     }
 
-    const month = new Date().toISOString().slice(0, 7);
-    const path = `${brand.slug}/${month}/${randomUUID()}-${safeName(filename)}`;
+    const path = newMediaPath(brand.slug, filename);
     const db = supabaseAdmin();
     const { data, error } = await db.storage.from(SOCIAL_BUCKET).createSignedUploadUrl(path);
     if (error || !data) {

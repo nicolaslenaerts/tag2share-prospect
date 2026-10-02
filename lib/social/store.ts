@@ -7,6 +7,7 @@
  *
  * ⚠️ Module SERVEUR.
  */
+import { randomUUID } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isValidEmail } from "@/lib/brand-sender";
 import { bufferChannels, type BufferChannel } from "./buffer";
@@ -47,7 +48,7 @@ export function isMissingTable(error: { code?: string; message?: string } | null
 export const MIGRATION_HINT =
   "Tables réseaux sociaux absentes : exécutez supabase/migrations/0018_social_buffer.sql dans l'éditeur SQL de Supabase.";
 
-function check<T>(res: { data: T; error: { code?: string; message: string } | null }): T {
+export function check<T>(res: { data: T; error: { code?: string; message: string } | null }): T {
   if (res.error) {
     if (isMissingTable(res.error)) throw new SocialError(MIGRATION_HINT, 503);
     throw new SocialError(res.error.message, 500);
@@ -57,6 +58,27 @@ function check<T>(res: { data: T; error: { code?: string; message: string } | nu
 
 export function publicMediaUrl(db: Db, path: string): string {
   return db.storage.from(SOCIAL_BUCKET).getPublicUrl(path).data.publicUrl;
+}
+
+function safeName(filename: string): string {
+  const cleaned = filename
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(-80);
+  return cleaned || "fichier";
+}
+
+/**
+ * Chemin d'un nouveau média dans le bucket : préfixé par la marque (contrôlé
+ * à l'enregistrement du post), avec un UUID. Le fichier est public (Buffer
+ * doit pouvoir le télécharger) mais son adresse est impossible à deviner.
+ */
+export function newMediaPath(brand: string, filename: string): string {
+  const month = new Date().toISOString().slice(0, 7);
+  return `${brand}/${month}/${randomUUID()}-${safeName(filename)}`;
 }
 
 // ─── Connexion Buffer ────────────────────────────────────────────────────────

@@ -339,3 +339,183 @@ export async function bufferPostStatus(apiKey: string, id: string): Promise<Buff
     error: p.error?.message ?? null,
   };
 }
+
+// ─── File d'attente (import des posts programmés dans Buffer) ────────────────
+
+export type BufferQueueAsset = {
+  kind: "image" | "video" | "document";
+  mimeType: string;
+  url: string;
+  /** Vignette calculée par Buffer (page 1 d'un PDF, image d'une vidéo). */
+  thumbnail: string | null;
+  width: number | null;
+  height: number | null;
+  /** Document seulement. */
+  title: string | null;
+  pageCount: number | null;
+};
+
+export type BufferQueuePost = {
+  id: string;
+  dueAt: string;
+  createdAt: string | null;
+  text: string;
+  channelId: string;
+  service: string;
+  /** metadata.type (post, reel, carousel, story...) ; null si non lu. */
+  postType: string | null;
+  firstComment: string | null;
+  assets: BufferQueueAsset[];
+};
+
+/**
+ * Lecture riche : type de post (réel ou non), premier commentaire, et
+ * métadonnées des médias. Noms de types et de champs relevés par
+ * introspection du schéma le 02/10/2026 (`CommonPostMetadata.type`,
+ * `DocumentAsset.document`...).
+ */
+const QUEUE_QUERY = `
+  query T2SBufferQueue($after: String, $first: Int, $input: PostsInput!) {
+    posts(after: $after, first: $first, input: $input) {
+      edges { node {
+        id status dueAt createdAt text channelId channelService
+        metadata {
+          ... on CommonPostMetadata { type }
+          ... on InstagramPostMetadata { firstComment }
+          ... on FacebookPostMetadata { firstComment }
+          ... on LinkedInPostMetadata { firstComment }
+        }
+        assets {
+          type mimeType source thumbnail
+          ... on ImageAsset { image { width height } }
+          ... on VideoAsset { video { width height } }
+          ... on DocumentAsset { document { title numPages } }
+        }
+      } }
+      pageInfo { endCursor hasNextPage }
+    }
+  }
+`;
+
+/**
+ * Repli : la requête éprouvée en production par Uncover, sans metadata. Si
+ * Buffer fait évoluer son schéma, une sélection invalide ferait échouer TOUTE
+ * la requête riche : on retombe sur celle-ci plutôt que de ne rien importer.
+ */
+const QUEUE_QUERY_BASIC = `
+  query T2SBufferQueueBasic($after: String, $first: Int, $input: PostsInput!) {
+    posts(after: $after, first: $first, input: $input) {
+      edges { node { id status dueAt createdAt text channelId channelService assets { mimeType source } } }
+      pageInfo { endCursor hasNextPage }
+    }
+  }
+`;
+
+type QueueNode = {
+  id: string;
+  status: string;
+  dueAt: string | null;
+  createdAt: string | null;
+  text: string | null;
+  channelId: string | null;
+  channelService: string | null;
+  metadata?: { type?: string | null; firstComment?: string | null } | null;
+  assets: Array<{
+    type?: string | null;
+    mimeType: string | null;
+    source: string | null;
+    thumbnail?: string | null;
+    image?: { width: number; height: number } | null;
+    video?: { width: number; height: number } | null;
+    document?: { title: string | null; numPages: number } | null;
+  }> | null;
+};
+type QueueResp = {
+  posts: { edges: Array<{ node: QueueNode }> | null; pageInfo: { endCursor: string | null; hasNextPage: boolean } } | null;
+};
+
+/** Statuts Buffer d'un post encore à venir (cf. STATUS_MAP). */
+const PENDING_STATUSES = new Set(["scheduled", "needs_approval", "sending"]);
+
+function assetKind(type: string | null | undefined, mime: string): BufferQueueAsset["kind"] | null {
+  if (type === "image" || type === "video" || type === "document") return type;
+  if (mime.startsWith("image/")) return "image";
+  if (mime.startsWith("video/")) return "video";
+  if (mime === "application/pdf") return "document";
+  return null;
+}
+
+/**
+ * Posts PROGRAMMÉS (pas encore partis) de toutes les organisations de la clé,
+ * dont la date prévue tombe dans la plage. Filtre sur `dueAt` et non sur
+ * startDate/endDate (qui matchent createdAt OU dueAt) ; le statut est filtré
+ * ici, jamais dans la requête (cf. en-tête).
+ */
+export async function bufferQueue(
+  apiKey: string,
+  range: { start: string; end: string; limit?: number }
+): Promise<BufferQueuePost[]> {
+  const orgIds = await organizationIds(apiKey);
+  if (orgIds.length === 0)
+    throw new BufferApiError("La clé Buffer ne donne accès à aucune organisation : aucun post ne peut être lu.");
+
+  const max = Math.min(Math.max(range.limit ?? 500, 1), 1000);
+  const out: BufferQueuePost[] = [];
+  let rich = true;
+
+  for (const organizationId of orgIds) {
+    let after: string | null = null;
+    while (out.length < max) {
+      const variables = {
+        after,
+        first: 50,
+        input: { organizationId, filter: { dueAt: { start: range.start, end: range.end } } },
+      };
+      let data: QueueResp;
+      try {
+        data = await graphql<QueueResp>(apiKey, rich ? QUEUE_QUERY : QUEUE_QUERY_BASIC, variables);
+      } catch (err) {
+        if (rich && err instanceof BufferApiError && err.kind === "api") {
+          rich = false;
+          continue;
+        }
+        throw err;
+      }
+      const page = data.posts;
+      for (const { node } of page?.edges ?? []) {
+        if (!PENDING_STATUSES.has(node.status) || !node.dueAt || !node.channelId) continue;
+        out.push({
+          id: node.id,
+          dueAt: node.dueAt,
+          createdAt: node.createdAt,
+          text: node.text ?? "",
+          channelId: node.channelId,
+          service: node.channelService ?? "unknown",
+          postType: node.metadata?.type ?? null,
+          firstComment: node.metadata?.firstComment?.trim() || null,
+          assets: (node.assets ?? []).flatMap((a): BufferQueueAsset[] => {
+            const mime = (a.mimeType ?? "").toLowerCase();
+            const kind = assetKind(a.type, mime);
+            if (!kind || !a.source) return [];
+            const size = a.image ?? a.video ?? null;
+            return [
+              {
+                kind,
+                mimeType: mime,
+                url: a.source,
+                thumbnail: a.thumbnail || null,
+                width: size?.width ?? null,
+                height: size?.height ?? null,
+                title: a.document?.title ?? null,
+                pageCount: a.document?.numPages ?? null,
+              },
+            ];
+          }),
+        });
+      }
+      if (!page?.pageInfo.hasNextPage || !page.pageInfo.endCursor) break;
+      after = page.pageInfo.endCursor;
+    }
+  }
+  return out;
+}
