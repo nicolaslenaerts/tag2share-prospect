@@ -184,7 +184,8 @@ function postMetadata(
     return { instagram: { type: isReel ? "reel" : "post", shouldShareToFeed: true, ...withComment } };
   }
   if (service === "facebook") {
-    if (!isReel && !comment) return undefined;
+    // `type` toujours requis (post | story | reel), même sans premier
+    // commentaire. Un carrousel Facebook est un `post` à plusieurs images.
     return { facebook: { type: isReel ? "reel" : "post", ...withComment } };
   }
   if (service === "linkedin" && comment) return { linkedin: withComment };
