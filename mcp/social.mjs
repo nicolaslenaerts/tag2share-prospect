@@ -34,6 +34,13 @@ const FORMAT_ARG = {
     "médias du MÊME post. Chaque réseau reçoit ce qui le concerne.",
 };
 
+const DOCUMENT_TITLE_ARG = {
+  type: "string",
+  description:
+    "Titre du PDF affiché sur LinkedIn (carrousel document), 200 caractères max. Absent : libellé " +
+    "interne (title), sinon nom du fichier.",
+};
+
 const WHEN_ARG = {
   type: ["string", "null"],
   description:
@@ -184,7 +191,11 @@ const createSocialPost = {
       brand: BRAND_ARG,
       format: FORMAT_ARG,
       text: { type: "string", description: "Texte du post." },
-      title: { type: "string", description: "Libellé interne (calendrier), non publié." },
+      title: {
+        type: "string",
+        description: "Libellé interne (calendrier). Sert de titre au PDF LinkedIn si document_title est vide.",
+      },
+      document_title: DOCUMENT_TITLE_ARG,
       scheduled_at: WHEN_ARG,
       channel_ids: CHANNELS_ARG,
       media: MEDIA_ARG,
@@ -217,6 +228,7 @@ const createSocialPost = {
         format: args.format,
         text: args.text,
         title: args.title ?? null,
+        document_title: args.document_title ?? null,
         scheduled_at: scheduledAt,
         first_comment: args.first_comment ?? null,
         notify: args.notify !== false,
@@ -244,6 +256,7 @@ const updateSocialPost = {
       format: FORMAT_ARG,
       text: { type: "string" },
       title: { type: ["string", "null"] },
+      document_title: { ...DOCUMENT_TITLE_ARG, type: ["string", "null"] },
       scheduled_at: WHEN_ARG,
       channel_ids: CHANNELS_ARG,
       media: MEDIA_ARG,
@@ -288,6 +301,7 @@ const updateSocialPost = {
         format: args.format ?? cur.format,
         text: has("text") ? args.text : cur.text,
         title: has("title") ? args.title : cur.title,
+        document_title: has("document_title") ? args.document_title : cur.document_title,
         scheduled_at: has("scheduled_at") ? parseWhen(args.scheduled_at) : cur.scheduled_at,
         first_comment: has("first_comment") ? args.first_comment : cur.first_comment,
         notify: has("notify") ? args.notify : cur.notify,
@@ -476,6 +490,7 @@ function fullResult(brand, { post: p, check }) {
     post: {
       id: p.id,
       title: p.title,
+      document_title: p.document_title,
       text: p.text,
       format: p.format,
       status: p.status,

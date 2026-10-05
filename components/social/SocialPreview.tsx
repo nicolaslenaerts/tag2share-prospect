@@ -28,7 +28,7 @@ import {
 import { cn } from "@/components/ui";
 import { pdfPages } from "@/lib/social/client-media";
 import { formatShort } from "@/lib/social/dates";
-import { mediaForTarget, REEL_SERVICES, SERVICE_STYLE, serviceLabel } from "@/lib/social/rules";
+import { documentTitleFor, mediaForTarget, REEL_SERVICES, SERVICE_STYLE, serviceLabel } from "@/lib/social/rules";
 import type { SocialFormat, SocialMedia } from "@/lib/social/types";
 
 export type PreviewMedia = Pick<
@@ -50,6 +50,7 @@ type PreviewProps = {
   media: PreviewMedia[];
   scheduledAt: string | null;
   title: string | null;
+  documentTitle: string | null;
 };
 
 // ─── Briques communes ────────────────────────────────────────────────────────
@@ -456,7 +457,7 @@ function LinkedInDocument({ doc, title }: { doc: PreviewMedia; title: string }) 
   );
 }
 
-function LinkedInPreview({ account, format, text, firstComment, media, scheduledAt, title }: PreviewProps) {
+function LinkedInPreview({ account, format, text, firstComment, media, scheduledAt, title, documentTitle }: PreviewProps) {
   const doc = media.find((m) => m.kind === "document");
   return (
     <div className="mx-auto w-full max-w-[460px] overflow-hidden rounded-lg border border-gray-200 bg-white text-[14px] text-[rgba(0,0,0,0.9)]">
@@ -476,7 +477,7 @@ function LinkedInPreview({ account, format, text, firstComment, media, scheduled
         </div>
       )}
       {doc ? (
-        <LinkedInDocument doc={doc} title={title?.trim() || doc.filename.replace(/\.pdf$/i, "")} />
+        <LinkedInDocument doc={doc} title={documentTitleFor({ document_title: documentTitle, title }, doc)} />
       ) : format === "carousel" ? (
         <NoMedia label="Ajoutez le PDF du carrousel LinkedIn" />
       ) : media.length === 1 ? (

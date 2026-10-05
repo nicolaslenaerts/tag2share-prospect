@@ -260,7 +260,7 @@ export async function setChannelEnabled(db: Db, brand: string, id: string, enabl
 // ─── Posts ───────────────────────────────────────────────────────────────────
 
 const POST_COLUMNS =
-  "id, brand, title, text, format, scheduled_at, status, first_comment, notify, notify_email, notified_at, created_at, updated_at";
+  "id, brand, title, document_title, text, format, scheduled_at, status, first_comment, notify, notify_email, notified_at, created_at, updated_at";
 
 type PostRow = Omit<SocialPost, "targets" | "media">;
 type MediaRow = Omit<SocialMedia, "url" | "thumbnail_url"> & { id: string; post_id: string };
@@ -330,6 +330,7 @@ export function parsePostInput(brand: string, body: unknown): PostInput {
   const text = str(b.text);
   if (text.length > 63206) throw new SocialError("Texte trop long.");
   const title = str(b.title).trim().slice(0, 200) || null;
+  const documentTitle = str(b.document_title).trim().slice(0, 200) || null;
   const firstComment = str(b.first_comment).trim().slice(0, 2200) || null;
 
   let scheduledAt: string | null = null;
@@ -353,6 +354,7 @@ export function parsePostInput(brand: string, body: unknown): PostInput {
 
   return {
     title,
+    document_title: documentTitle,
     text,
     format,
     scheduled_at: scheduledAt,
@@ -416,6 +418,7 @@ export async function writePost(
 
   const fields = {
     title: input.title,
+    document_title: input.document_title,
     text: input.text,
     format: input.format,
     scheduled_at: input.scheduled_at,

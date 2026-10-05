@@ -324,6 +324,7 @@ async function createFromGroup(db: Db, brand: string, group: BufferQueuePost[], 
       .insert({
         brand,
         title: media.document?.title?.trim() || null,
+        document_title: media.document?.title?.trim() || null,
         text: first.text,
         format,
         scheduled_at: first.dueAt,

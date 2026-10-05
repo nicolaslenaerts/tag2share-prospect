@@ -113,7 +113,7 @@ Réponse des outils de variantes : `valid` (la somme des poids fait 100) et
 | `get_social_setup` | `brand`, `refresh_channels?` | Clé Buffer connectée ou non, canaux (`id`, `service`, `name`, `usable`), destinataire des notifications, `next_step` si quelque chose manque. `refresh_channels: true` relit Buffer (quota limité : seulement si un canal manque). |
 | `list_social_posts` | `brand`, `from?`, `to?` | Calendrier : format, statut, date (`scheduled_at_local`), réseaux visés. Sans plage : tous les posts, brouillons compris. |
 | `get_social_post` | `brand`, `post_id` | Détail complet, médias avec leur `storage_path`, statut par réseau, et `check`. |
-| `create_social_post` | `brand`, `format`, `text`, `title?`, `scheduled_at?`, `channel_ids?`, `media?`, `first_comment?`, `notify?`, `notify_email?` | Crée un post **brouillon** (rien ne part vers Buffer) et envoie les médias. |
+| `create_social_post` | `brand`, `format`, `text`, `title?`, `document_title?`, `scheduled_at?`, `channel_ids?`, `media?`, `first_comment?`, `notify?`, `notify_email?` | Crée un post **brouillon** (rien ne part vers Buffer) et envoie les médias. |
 | `update_social_post` | `brand`, `post_id`, puis seulement les champs à changer, `reschedule?` | Modifie un post. `media` et `channel_ids`, s'ils sont fournis, **remplacent la liste entière**. |
 | `schedule_social_post` | `brand`, `post_id`, `mode` (`buffer_draft` ou `schedule`), `confirm: true` | Envoie à Buffer. `buffer_draft` : brouillon Buffer, rien de publié. `schedule` : programmé à sa date, au moins 2 minutes dans le futur. |
 | `unschedule_social_post` | `brand`, `post_id` | Retire le post de Buffer et le remet en brouillon. Ce qui est déjà publié reste en ligne. |
@@ -179,7 +179,9 @@ calculée automatiquement.
 
 Un carrousel multi-réseaux contient **les images ET le PDF dans le même post** :
 chaque réseau reçoit ce qui le concerne. Pour LinkedIn, c'est à vous de fournir
-le PDF (une page par image). Le MCP ne l'assemble pas.
+le PDF (une page par image). Le MCP ne l'assemble pas. Le titre affiché
+au-dessus du PDF sur LinkedIn se donne dans `document_title` ; sans lui,
+c'est le libellé interne (`title`), puis le nom du fichier.
 
 ### Limites contrôlées avant l'envoi
 
@@ -238,6 +240,7 @@ Sur les réseaux sans format réel, la vidéo part en publication classique (un
   "brand": "horodo",
   "format": "carousel",
   "text": "...",
+  "document_title": "5 erreurs qui coûtent des heures sup",
   "channel_ids": ["<ig>", "<fb>", "<li>"],
   "media": [
     {"file": "/chemin/slide-1.png"},

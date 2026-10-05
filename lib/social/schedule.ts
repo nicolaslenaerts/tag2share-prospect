@@ -18,7 +18,7 @@ import {
   bufferDeletePost,
   type BufferAsset,
 } from "./buffer";
-import { checkPlan, mediaForTarget, planFeatures, queueErrors, rollupStatus, serviceLabel } from "./rules";
+import { checkPlan, documentTitleFor, mediaForTarget, planFeatures, queueErrors, rollupStatus, serviceLabel } from "./rules";
 import { listChannels, loadConnection, loadPost, queuedPerChannel, requireApiKey, SocialError } from "./store";
 import type { ScheduleMode, SocialMedia, SocialPost, SocialTarget } from "./types";
 
@@ -41,7 +41,7 @@ function toAsset(post: SocialPost, m: SocialMedia): BufferAsset {
     return {
       document: {
         url: m.url,
-        title: post.title?.trim() || m.filename.replace(/\.pdf$/i, ""),
+        title: documentTitleFor(post, m),
         thumbnailUrl: m.thumbnail_url!,
       },
     };

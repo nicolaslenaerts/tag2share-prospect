@@ -186,6 +186,7 @@ export function SocialPlanner() {
       post: null,
       draft: {
         title: post.title ? `${post.title} (copie)` : null,
+        document_title: post.document_title,
         text: post.text,
         format: post.format,
         first_comment: post.first_comment,

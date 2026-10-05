@@ -73,6 +73,8 @@ export type SocialPost = {
   id: string;
   brand: string;
   title: string | null;
+  /** Titre du PDF LinkedIn (migration 0022) ; null : repli sur `title`. */
+  document_title: string | null;
   text: string;
   format: SocialFormat;
   scheduled_at: string | null;
@@ -93,6 +95,7 @@ export type MediaInput = Omit<SocialMedia, "id" | "url" | "thumbnail_url">;
 /** Corps d'une création / modification de post. */
 export type PostInput = {
   title: string | null;
+  document_title: string | null;
   text: string;
   format: SocialFormat;
   scheduled_at: string | null;

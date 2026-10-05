@@ -161,6 +161,17 @@ export function mediaForTarget<M extends MediaLike>(
   return [...images, ...videos].slice(0, 1);
 }
 
+/**
+ * Titre du PDF d'un carrousel LinkedIn : envoyé à Buffer (requis par le
+ * schéma) et montré par l'aperçu. Repli : libellé interne, puis nom du fichier.
+ */
+export function documentTitleFor(
+  post: { document_title: string | null; title: string | null },
+  doc: Pick<SocialMedia, "filename">
+): string {
+  return post.document_title?.trim() || post.title?.trim() || doc.filename.replace(/\.pdf$/i, "");
+}
+
 export type PlanCheck = { errors: string[]; warnings: string[] };
 
 /**

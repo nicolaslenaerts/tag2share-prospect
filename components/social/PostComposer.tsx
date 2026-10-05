@@ -30,6 +30,7 @@ import { imagesToPdf, prepareMedia, type ComposerMedia } from "@/lib/social/clie
 import { formatLong, fromLocalInput, toLocalInput } from "@/lib/social/dates";
 import {
   checkPlan,
+  documentTitleFor,
   FIRST_COMMENT_SERVICES,
   type PlanFeatures,
   FORMAT_LABEL,
@@ -116,6 +117,7 @@ export function PostComposer({
   const brand = useBrand();
   const [post, setPost] = useState<SocialPost | null>(initialPost);
   const [title, setTitle] = useState(initialPost?.title ?? draft?.title ?? "");
+  const [documentTitle, setDocumentTitle] = useState(initialPost?.document_title ?? draft?.document_title ?? "");
   const [text, setText] = useState(initialPost?.text ?? draft?.text ?? "");
   const [format, setFormat] = useState<SocialFormat>(initialPost?.format ?? draft?.format ?? "post");
   const [when, setWhen] = useState(toLocalInput(initialPost?.scheduled_at ?? draft?.scheduled_at ?? null));
@@ -179,6 +181,7 @@ export function PostComposer({
   function body(): PostInput {
     return {
       title: title.trim() || null,
+      document_title: documentTitle.trim() || null,
       text,
       format,
       scheduled_at: scheduledIso,
@@ -331,7 +334,7 @@ export function PostComposer({
       const images = visuals.filter((m) => m.kind === "image");
       if (images.length < 2) throw new Error("Ajoutez au moins 2 images pour générer le PDF.");
       const blob = await imagesToPdf(images.map((m) => m.url));
-      const name = `${(title.trim() || "carrousel").replace(/[^\p{L}\p{N} _-]+/gu, "").slice(0, 60) || "carrousel"}.pdf`;
+      const name = `${(documentTitle.trim() || title.trim() || "carrousel").replace(/[^\p{L}\p{N} _-]+/gu, "").slice(0, 60) || "carrousel"}.pdf`;
       await addFiles([new File([blob], name, { type: "application/pdf" })], ["document"]);
     });
 
@@ -463,7 +466,7 @@ export function PostComposer({
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 disabled={locked}
-                placeholder="Titre interne (calendrier, titre du PDF LinkedIn) - facultatif"
+                placeholder="Titre interne (calendrier) - facultatif"
               />
               {services.some((s) => FIRST_COMMENT_SERVICES.has(s)) &&
                 (features.firstComment || firstComment.trim() ? (
@@ -607,6 +610,18 @@ export function PostComposer({
                       </div>
                     )
                   )}
+                  <Input
+                    value={documentTitle}
+                    onChange={(e) => setDocumentTitle(e.target.value)}
+                    disabled={locked}
+                    maxLength={200}
+                    className="mt-3"
+                    placeholder={
+                      doc
+                        ? `Titre du document sur LinkedIn (par défaut : ${documentTitleFor({ document_title: null, title }, doc)})`
+                        : "Titre du document sur LinkedIn - facultatif"
+                    }
+                  />
                   <input
                     ref={pdfInput}
                     type="file"
@@ -718,6 +733,7 @@ export function PostComposer({
                 media={media}
                 scheduledAt={scheduledIso}
                 title={title}
+                documentTitle={documentTitle}
               />
               {!selectedChannels.length && (
                 <p className="mt-3 text-center text-xs text-gray-400">Aperçu indicatif : choisissez des canaux pour voir leur rendu.</p>
