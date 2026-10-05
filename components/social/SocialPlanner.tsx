@@ -13,7 +13,7 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { CalendarDays, CircleCheck, Download, List, Plug, Plus, RefreshCw, TriangleAlert } from "lucide-react";
+import { CalendarDays, CircleCheck, Download, FolderOpen, List, Plug, Plus, RefreshCw, TriangleAlert } from "lucide-react";
 import { api } from "@/lib/api";
 import { Button, Spinner, cn } from "@/components/ui";
 import { useBrand } from "@/components/BrandProvider";
@@ -24,14 +24,16 @@ import type { ImportSummary } from "@/lib/social/import";
 import type { ConnectionView, SocialPost } from "@/lib/social/types";
 import { CalendarView } from "./CalendarView";
 import { ConnectionPanel } from "./ConnectionPanel";
+import { FilesView } from "./FilesView";
 import { ListView } from "./ListView";
 import { PostComposer, type ComposerDraft } from "./PostComposer";
 
-type Tab = "calendar" | "list" | "connection";
+type Tab = "calendar" | "list" | "files" | "connection";
 
 const TABS: { value: Tab; label: string; icon: typeof List }[] = [
   { value: "calendar", label: "Calendrier", icon: CalendarDays },
   { value: "list", label: "Liste", icon: List },
+  { value: "files", label: "Fichiers", icon: FolderOpen },
   { value: "connection", label: "Connexion", icon: Plug },
 ];
 
@@ -303,6 +305,16 @@ export function SocialPlanner() {
 
       {connection?.ready && tab === "list" && (
         <ListView posts={posts} channels={connection.channels} onOpen={(post) => setEditor({ post, key: Date.now() })} />
+      )}
+
+      {connection?.ready && tab === "files" && (
+        <FilesView
+          onOpenPost={(id) => {
+            const post = posts.find((p) => p.id === id);
+            if (post) setEditor({ post, key: Date.now() });
+          }}
+          onChanged={loadPosts}
+        />
       )}
 
       {editor && connection && (

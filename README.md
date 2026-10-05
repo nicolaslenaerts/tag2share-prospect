@@ -297,6 +297,25 @@ Coût : environ 4 requêtes Buffer par import pour une organisation de moins de
 50 posts programmés (le quota gratuit est de 250 par jour). C'est pour cette
 raison qu'il n'y a pas d'import automatique périodique.
 
+### Fichiers du stockage
+
+Onglet **Fichiers** de /social : tous les fichiers du bucket pour la marque
+active, avec leur poids, leur date et les posts qui les utilisent (un clic
+ouvre le post). Filtres : orphelins (aucun post), utilisés, dans Buffer.
+Code : [`lib/social/files.ts`](lib/social/files.ts).
+
+Suppression, unitaire ou groupée, toujours confirmée :
+
+- **orphelin** : supprimé ;
+- **utilisé par un brouillon ou un post publié** : supprimé et retiré de ces
+  posts (un post publié reste en ligne, les réseaux ont leur propre copie) ;
+- **utilisé par un post encore dans Buffer** (programmé ou brouillon Buffer) :
+  **refusé**, l'interface comme le serveur. Buffer télécharge le fichier au
+  moment de publier : il faut d'abord déprogrammer le post.
+
+La vignette d'un PDF ou d'une vidéo est affichée avec son fichier et
+supprimée avec lui.
+
 ### Modifier un post programmé
 
 Un post déjà dans Buffer est **retiré puis reprogrammé** avec les nouvelles
