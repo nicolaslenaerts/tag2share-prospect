@@ -201,6 +201,8 @@ export function SocialPlanner() {
   const upsert = (post: SocialPost) =>
     setPosts((prev) => (prev.some((p) => p.id === post.id) ? prev.map((p) => (p.id === post.id ? post : p)) : [...prev, post]));
 
+  const removePost = (id: string) => setPosts((prev) => prev.filter((p) => p.id !== id));
+
   const closeEditor = () => {
     setEditor(null);
     if (params.get("post")) router.replace("/social");
@@ -304,7 +306,12 @@ export function SocialPlanner() {
       )}
 
       {connection?.ready && tab === "list" && (
-        <ListView posts={posts} channels={connection.channels} onOpen={(post) => setEditor({ post, key: Date.now() })} />
+        <ListView
+          posts={posts}
+          channels={connection.channels}
+          onOpen={(post) => setEditor({ post, key: Date.now() })}
+          onDeleted={removePost}
+        />
       )}
 
       {connection?.ready && tab === "files" && (
@@ -329,7 +336,7 @@ export function SocialPlanner() {
           queued={queued}
           onClose={closeEditor}
           onSaved={upsert}
-          onDeleted={(id) => setPosts((prev) => prev.filter((p) => p.id !== id))}
+          onDeleted={removePost}
           onDuplicate={duplicate}
         />
       )}
