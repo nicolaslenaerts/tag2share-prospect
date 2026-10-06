@@ -4,7 +4,7 @@
 > Il explique comment utiliser **Tag2Share Marketing**, par son serveur MCP, pour
 > préparer des campagnes de prospection par email et des publications sur les
 > réseaux sociaux (publication, réel, carrousel) via Buffer.
-> Mis à jour le 02/10/2026.
+> Mis à jour le 06/10/2026.
 
 ## 1. Ce que c'est
 
@@ -39,7 +39,8 @@
    Une campagne créée sur la mauvaise marque part avec une autre identité
    d'expédition. Si l'utilisateur ne la nomme pas mais que la session travaille
    dans le projet d'une marque (dossier ou dépôt à son nom, par exemple
-   `eazzy`), prenez cette marque et **annoncez-la** dans le récapitulatif.
+   `eazzy` ; le dossier `posts-perso` est celui de `nicolas-lenaerts`),
+   prenez cette marque et **annoncez-la** dans le récapitulatif.
    Sinon, demandez.
 2. **Rien de public sans accord explicite de l'utilisateur.** Programmer un post
    le rendra public à sa date, sans autre intervention. Avant tout
@@ -68,7 +69,7 @@
 
 ## 3. Les marques (produits gérés par l'outil)
 
-État au 02/10/2026, à revérifier avec `list_brands` et `get_social_setup`.
+État au 06/10/2026, à revérifier avec `list_brands` et `get_social_setup`.
 L'outil a sa propre adresse (`marketing.tag2share.com`), mais chaque marque a
 aussi la sienne (`app_url` dans `list_brands`, par exemple
 `marketing.horodo.be`) : c'est le même outil, présenté aux couleurs de la marque.
@@ -79,6 +80,7 @@ aussi la sienne (`app_url` dans `list_brands`, par exemple
 | `tag2share` (le produit, pas l'outil) | `keyring` = Porte-clé connecté, `card` = Carte de visite connectée, `stand` = Présentoir connecté | non : adresse de test manquante | non connecté |
 | `voxado` | `general` = Voxado, `starter`, `pro`, `premium` | oui | connecté : Instagram, Facebook, LinkedIn |
 | `eazzy` | `general` = Eazzy, `pack-base` = l'accompagnement en 4 étapes | oui | non connecté |
+| `nicolas-lenaerts` (profil personnel, posts uniquement) | `general` = Nicolas Lenaerts | non, voulu : aucune campagne email | non connecté |
 
 Une marque non connectée à Buffer peut recevoir des posts en **brouillon**,
 mais sans canal : rien n'est programmable tant que sa clé Buffer n'est pas
@@ -86,6 +88,9 @@ connectée dans `/social`.
 
 - `can_send` (dans `list_brands`) dit si une campagne de cette marque peut
   partir pour de vrai. S'il est faux, `blockers` explique pourquoi.
+- `nicolas-lenaerts` est le profil personnel de Nicolas : la marque ne sert
+  qu'aux réseaux sociaux. Ne créez pas de campagne email pour elle. Ses
+  visuels suivent la charte de `~/Desktop/posts-perso/charte-perso.md`.
 - La connexion Buffer et les canaux (Instagram, Facebook, LinkedIn...) se
   vérifient marque par marque avec `get_social_setup`.
 
@@ -110,7 +115,7 @@ Réponse des outils de variantes : `valid` (la somme des poids fait 100) et
 
 | Outil | Paramètres | Effet |
 | --- | --- | --- |
-| `get_social_setup` | `brand`, `refresh_channels?` | Clé Buffer connectée ou non, canaux (`id`, `service`, `name`, `usable`), destinataire des notifications, `next_step` si quelque chose manque. `refresh_channels: true` relit Buffer (quota limité : seulement si un canal manque). |
+| `get_social_setup` | `brand`, `refresh_channels?` | Clé Buffer connectée ou non, offre (`plan` : `free` / `paid`, `first_comment_available`, `scheduled_posts_per_channel`), canaux (`id`, `service`, `name`, `usable`), destinataire des notifications, `next_step` si quelque chose manque. `refresh_channels: true` relit Buffer (quota limité : seulement si un canal manque). |
 | `list_social_posts` | `brand`, `from?`, `to?` | Calendrier : format, statut, date (`scheduled_at_local`), réseaux visés. Sans plage : tous les posts, brouillons compris. |
 | `get_social_post` | `brand`, `post_id` | Détail complet, médias avec leur `storage_path`, statut par réseau, et `check`. |
 | `create_social_post` | `brand`, `format`, `text`, `title?`, `document_title?`, `scheduled_at?`, `channel_ids?`, `media?`, `first_comment?`, `notify?`, `notify_email?` | Crée un post **brouillon** (rien ne part vers Buffer) et envoie les médias. |
@@ -194,7 +199,8 @@ c'est le libellé interne (`title`), puis le nom du fichier.
 | Images par post | X et Bluesky : 4 au maximum |
 | Vidéo obligatoire | TikTok, YouTube |
 | Image obligatoire | Pinterest |
-| Premier commentaire (`first_comment`) | Instagram, Facebook, LinkedIn seulement (ignoré ailleurs) |
+| Premier commentaire (`first_comment`) | Instagram, Facebook, LinkedIn seulement, et **offre Buffer payante seulement** : en offre gratuite (`first_comment_available: false` dans `get_social_setup`), il n'est pas envoyé. Ne pas en proposer. |
+| File Buffer | `scheduled_posts_per_channel` posts programmés au plus par canal (**10 en offre gratuite**). Canal plein : `schedule_social_post` est refusé avant tout envoi. Pour une série, programmer au fil de l'eau ou par lots de 10 par canal. |
 | Réel | format réel sur Instagram et Facebook seulement |
 
 Vidéo trop lourde : la recompresser avant l'envoi, par exemple
